@@ -2,6 +2,7 @@ import { useState } from "react";
 import "./App.css";
 import "./theme.css";
 import ChatWidget from "./ChatWidget";
+import { useAuth } from "./AuthContext";
 
 function Icon({ name, size = 18 }) {
   const paths = {
@@ -39,7 +40,14 @@ function Icon({ name, size = 18 }) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Demo data. Baad me backend/API se aayega.                           */
+/* Helper: logged-in user ka naam / initial                            */
+/* ------------------------------------------------------------------ */
+function getDisplayName(user) {
+  return user?.user_metadata?.full_name || user?.email || "User";
+}
+
+/* ------------------------------------------------------------------ */
+/* Demo data.                         */
 /* ------------------------------------------------------------------ */
 const statusStyle = (status) => ({
   fontSize: 12,
@@ -83,7 +91,7 @@ const resolvedData = [
 ];
 
 /* ------------------------------------------------------------------ */
-/* SVG chart helpers (koi extra library install nahi karni)           */
+/* SVG chart helpers         */
 /* ------------------------------------------------------------------ */
 const AXIS_TEXT = "#8d9bb0";
 const GRID_LINE = "rgba(255,255,255,0.07)";
@@ -290,6 +298,9 @@ function Donut({ parts, total }) {
 /* Sidebar                                                             */
 /* ------------------------------------------------------------------ */
 function Sidebar({ active, setActive, open, close }) {
+  const { user, signOut } = useAuth();
+  const displayName = getDisplayName(user);
+
   const links = [
     { id: "Overview", icon: "grid" },
     { id: "Knowledge sources", icon: "book" },
@@ -340,9 +351,19 @@ function Sidebar({ active, setActive, open, close }) {
             <button onClick={() => setActive("Assistant settings")}>Upgrade plan <Icon name="arrow" size={14} /></button>
           </div>
           <div className="profile">
-            <div className="profile-avatar">S</div>
-            <div className="profile-copy"><strong>Shikha Upadhyay</strong><small>Admin</small></div>
-            <button className="profile-menu" aria-label="Account menu">•••</button>
+            <div className="profile-avatar">{displayName[0].toUpperCase()}</div>
+            <div className="profile-copy">
+              <strong className="profile-name">{displayName}</strong>
+              <small>Admin</small>
+            </div>
+            <button
+              className="profile-menu"
+              aria-label="Sign out"
+              title="Sign out"
+              onClick={signOut}
+            >
+              •••
+            </button>
           </div>
         </div>
       </aside>
@@ -351,23 +372,26 @@ function Sidebar({ active, setActive, open, close }) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Topbar (sab pages me common)                                        */
+/* Topbar                                       */
 /* ------------------------------------------------------------------ */
 function Topbar({ title }) {
+  const { user } = useAuth();
+  const initial = getDisplayName(user)[0].toUpperCase();
+
   return (
     <header className="topbar">
       <div className="breadcrumbs"><span>Workspace</span><b>/</b><strong>{title}</strong></div>
       <div className="topbar-actions">
         <button className="icon-button" aria-label="Search"><Icon name="search" /></button>
         <button className="help-button">Help center <Icon name="arrow" size={14} /></button>
-        <div className="top-avatar">S</div>
+        <div className="top-avatar">{initial}</div>
       </div>
     </header>
   );
 }
 
 /* ------------------------------------------------------------------ */
-/* Assistant logo (logo ho to image, warna pehla akshar)               */
+/* Assistant logo            */
 /* ------------------------------------------------------------------ */
 function AssistantAvatar({ assistant, size = 28 }) {
   return (
@@ -592,7 +616,7 @@ function AssistantSettings({ assistant, onSave }) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Overview (graph style) + baaki placeholder pages                    */
+/* Overview (graph style)                  */
 /* ------------------------------------------------------------------ */
 const overviewCss = `
 .charts-row { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 15px; margin-top: 16px; }
@@ -606,6 +630,9 @@ const overviewCss = `
 `;
 
 function Overview({ active, setActive }) {
+  const { user } = useAuth();
+  const firstName = getDisplayName(user).split(/[ @]/)[0];
+
   if (active !== "Overview") {
     const details = {
       "Knowledge sources": ["Knowledge sources", "Connect documents and websites so your assistant can answer with your content.", "Add a source"],
@@ -631,7 +658,7 @@ function Overview({ active, setActive }) {
         <section className="welcome-row">
           <div>
             <div className="eyebrow"><span className="status-dot" /> YOUR AI WORKSPACE</div>
-            <h1>Good evening, Shikha <span className="wave">✳</span></h1>
+            <h1>Good evening, {firstName}<span className="wave">✳</span></h1>
             <p className="welcome-subtitle">Here’s what’s happening with your AI assistant today.</p>
           </div>
           <button className="date-filter"><Icon name="clock" size={15} /> Last 30 days <span>⌄</span></button>
