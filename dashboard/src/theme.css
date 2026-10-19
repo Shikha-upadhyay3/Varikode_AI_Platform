@@ -1,0 +1,165 @@
+/* ===== Quantum dark-glass theme (blue + teal) =====
+   Ye file App.css ke BAAD load hoti hai, isliye purani styles ko override karti hai. */
+
+:root {
+  --bg: #080d14;
+  --q-blue: #1e90ff;
+  --q-blue-soft: #4db0ff;
+  --q-teal: #2dd4bf;
+  --q-glass: linear-gradient(145deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.022));
+  --q-line: rgba(255, 255, 255, 0.11);
+}
+
+body {
+  background: #080d14;
+  color: #e6edf6;
+}
+
+/* Background glow */
+.app-shell {
+  background:
+    radial-gradient(800px 480px at 88% 105%, rgba(45, 212, 191, 0.15), transparent 60%),
+    radial-gradient(900px 520px at 8% -5%, rgba(30, 144, 255, 0.15), transparent 60%),
+    #080d14;
+}
+
+/* ---------- Sidebar ---------- */
+.sidebar {
+  background: rgba(13, 19, 28, 0.96);
+  border-right: 1px solid rgba(255, 255, 255, 0.07);
+}
+.brand-mark {
+  background: linear-gradient(140deg, var(--q-blue), var(--q-teal));
+  box-shadow: 0 6px 22px rgba(30, 144, 255, 0.4);
+}
+.brand-ai { color: var(--q-teal); }
+
+.workspace-switcher {
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid var(--q-line);
+}
+.workspace-avatar,
+.profile-avatar,
+.top-avatar {
+  background: linear-gradient(145deg, var(--q-blue), var(--q-teal));
+}
+
+.nav-link { color: #98a6b8; }
+.nav-link:hover { color: #eef4fb; background: rgba(255, 255, 255, 0.06); }
+.nav-link-active {
+  color: var(--q-blue-soft);
+  background: rgba(30, 144, 255, 0.14);
+  border-color: rgba(61, 165, 255, 0.32);
+}
+.nav-count { background: rgba(77, 176, 255, 0.16); color: var(--q-blue-soft); }
+
+.plan-card {
+  background: var(--q-glass);
+  border: 1px solid var(--q-line);
+}
+.plan-heading span:last-child { color: var(--q-teal); }
+.usage-track { background: rgba(255, 255, 255, 0.1); }
+.usage-track span { background: linear-gradient(90deg, var(--q-blue), var(--q-teal)); }
+.plan-card > button { color: var(--q-blue-soft); }
+.profile { border-top: 1px solid rgba(255, 255, 255, 0.08); }
+
+/* ---------- Topbar ---------- */
+.topbar {
+  background: rgba(11, 17, 25, 0.65);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+.icon-button:hover,
+.help-button:hover { color: #fff; }
+
+/* ---------- Headings ---------- */
+.eyebrow { color: var(--q-teal); }
+.status-dot {
+  background: var(--q-teal);
+  box-shadow: 0 0 10px var(--q-teal);
+}
+.welcome-row h1,
+.placeholder-page h1 {
+  background: linear-gradient(90deg, #3aa0ff, var(--q-teal));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+.wave { -webkit-text-fill-color: #f4c87c; }
+.welcome-subtitle,
+.placeholder-page > p { color: #8d9bb0; }
+.footer-heart { color: var(--q-teal); }
+
+/* ---------- Glass cards ---------- */
+.stat-card,
+.panel {
+  background: var(--q-glass);
+  border: 1px solid var(--q-line);
+  border-radius: 16px;
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+  transition: border-color 0.2s ease, transform 0.2s ease;
+}
+.stat-card:hover,
+.panel:hover { border-color: rgba(77, 176, 255, 0.4); }
+.stat-card:hover { transform: translateY(-2px); }
+
+.panel-heading { border-bottom: 1px solid rgba(255, 255, 255, 0.08); }
+.activity-item { border-bottom: 1px solid rgba(255, 255, 255, 0.07); }
+
+/* ---------- Icon chips ---------- */
+.violet { color: var(--q-blue-soft); background: rgba(30, 144, 255, 0.17); }
+.mint   { color: var(--q-teal);      background: rgba(45, 212, 191, 0.17); }
+.amber  { color: #fbbf24;            background: rgba(251, 191, 36, 0.16); }
+.blue   { color: #7db4ff;            background: rgba(96, 165, 250, 0.17); }
+
+/* ---------- Sparkline bars ---------- */
+.sparkline { opacity: 0.9; }
+.spark-violet { color: #3aa0ff; }
+.spark-mint   { color: var(--q-teal); }
+.spark-amber  { color: #e0b04a; }
+.spark-blue   { color: #60a5fa; }
+.trend { color: #34d399; }
+
+/* ---------- Buttons ---------- */
+.date-filter,
+.subtle-button,
+.view-all,
+.manage-sources {
+  color: #cbd7e6;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--q-line);
+}
+.date-filter:hover,
+.subtle-button:hover,
+.view-all:hover,
+.manage-sources:hover {
+  background: rgba(255, 255, 255, 0.09);
+  border-color: rgba(77, 176, 255, 0.45);
+}
+
+.primary-button {
+  background: linear-gradient(135deg, var(--q-blue), #14b8a6);
+  box-shadow: 0 8px 22px rgba(30, 144, 255, 0.35);
+}
+.primary-button:hover {
+  background: linear-gradient(135deg, #3aa0ff, #2dd4bf);
+}
+
+.small-add {
+  color: var(--q-blue-soft);
+  background: rgba(30, 144, 255, 0.16);
+  border: 1px solid rgba(61, 165, 255, 0.35);
+}
+
+/* ---------- Knowledge base panel ---------- */
+.source-type-icon.doc { color: var(--q-blue-soft); background: rgba(30, 144, 255, 0.17); }
+.source-type-icon.web { color: var(--q-teal); background: rgba(45, 212, 191, 0.17); }
+.source-ready { color: #34d399; }
+.source-ready i { background: #34d399; }
+
+/* ---------- Footer ---------- */
+.page-footer { border-top: 1px solid rgba(255, 255, 255, 0.07); }
