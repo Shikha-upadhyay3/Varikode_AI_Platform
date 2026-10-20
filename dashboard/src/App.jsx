@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import "./App.css";
 import "./theme.css";
 import ChatWidget from "./ChatWidget";
-import { useAuth } from "./AuthContext";
+import { useAuth } from "./AuthContext"
+import { supabase } from "./lib/supabaseClient";
 
 function Icon({ name, size = 18 }) {
   const paths = {
@@ -300,6 +301,69 @@ function Donut({ parts, total }) {
 function Sidebar({ active, setActive, open, close }) {
   const { user, signOut } = useAuth();
   const displayName = getDisplayName(user);
+  const [organizationName, setOrganizationName] = useState("");
+const [organization, setOrganization] = useState(null);
+const [organizationError, setOrganizationError] = useState("");
+const [creatingOrganization, setCreatingOrganization] = useState(false);
+
+useEffect(() => {
+  async function loadOrganization() {
+    const { data, error } = await supabase
+      .from("organizations")
+      .select("id, name")
+      .eq("name", "Varikode.tech")
+      .maybeSingle();
+
+    if (error) {
+      setOrganizationError(error.message);
+    } 
+    else if (data) {
+      setOrganization(data);
+      const { data: membership, error: membershipError } = await supabase
+  .from("memberships")
+  .select("organization_id, role")
+  .eq("organization_id", data.id)
+  .single();
+
+console.log("Membership RLS check:", { membership, membershipError });
+
+    }
+  }
+
+  loadOrganization();
+}, []);
+
+async function handleCreateOrganization(event) {
+
+
+  event.preventDefault();
+  setOrganizationError("");
+  setCreatingOrganization(true);
+
+  const { data: organizationId, error } = await supabase.rpc(
+    "create_organization",
+    { org_name: organizationName.trim() }
+  );
+
+  if (error) {
+    setOrganizationError(error.message);
+  } else {
+    const { data: createdOrganization, error: fetchError } = await supabase
+      .from("organizations")
+      .select("id, name")
+      .eq("id", organizationId)
+      .single();
+
+    if (fetchError) {
+      setOrganizationError(fetchError.message);
+    } else {
+      setOrganization(createdOrganization);
+      
+    }
+  }
+
+  setCreatingOrganization(false);
+}
 
   const links = [
     { id: "Overview", icon: "grid" },
@@ -319,11 +383,21 @@ function Sidebar({ active, setActive, open, close }) {
         </a>
 
         <div className="workspace-label">WORKSPACE</div>
-        <button className="workspace-switcher">
-          <span className="workspace-avatar">V</span>
-          <span className="workspace-copy"><strong>Varikode Studio</strong><small>Free plan</small></span>
-          <span className="chevron">⌄</span>
-        </button>
+        <form onSubmit={handleCreateOrganization}>
+  <input
+    value={organizationName}
+    onChange={(event) => setOrganizationName(event.target.value)}
+    placeholder="Organization name"
+    aria-label="Organization name"
+    required
+  />
+  <button type="submit" disabled={creatingOrganization}>
+    {creatingOrganization ? "Creating..." : "Create organization"}
+  </button>
+
+  {organization && <p>Organization: {organization.name}</p>}
+  {organizationError && <p role="alert">{organizationError}</p>}
+</form>
 
         <div className="nav-label">PLATFORM</div>
         <nav className="nav-list" aria-label="Main navigation">
