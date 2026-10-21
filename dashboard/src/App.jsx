@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import "./App.css";
 import "./theme.css";
 import ChatWidget from "./ChatWidget";
 import { useAuth } from "./AuthContext";
+import { supabase } from "./lib/supabaseClient";
 
 function Icon({ name, size = 18 }) {
   const paths = {
@@ -20,6 +21,7 @@ function Icon({ name, size = 18 }) {
     bot: <><rect x="3" y="8" width="18" height="13" rx="3" /><path d="M12 8V4m-3 0h6M8 13h.01M16 13h.01M9 17h6" /></>,
     clock: <><circle cx="12" cy="12" r="10" /><path d="M12 6v6l4 2" /></>,
     chat: <><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></>,
+    trash: <><path d="M3 6h18" /><path d="M8 6V4h8v2" /><path d="M19 6l-1 14H6L5 6" /><path d="M10 11v5M14 11v5" /></>,
   };
 
   return (
@@ -44,6 +46,73 @@ function Icon({ name, size = 18 }) {
 /* ------------------------------------------------------------------ */
 function getDisplayName(user) {
   return user?.user_metadata?.full_name || user?.email || "User";
+}
+
+function formatDate(value) {
+  if (!value) return "Not available";
+  return new Intl.DateTimeFormat("en", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(new Date(value));
+}
+
+function useWorkspaceMembership() {
+  const { user } = useAuth();
+  const userId = user?.id;
+  const [organization, setOrganization] = useState(null);
+  const [role, setRole] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!userId) {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadOrganization() {
+      const { data, error: loadError } = await supabase
+        .from("memberships")
+        .select("role, organizations(id, name)")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: true })
+        .limit(1);
+
+      if (cancelled) return;
+
+      if (loadError) {
+        setError(loadError.message);
+        setOrganization(null);
+        setRole("");
+      } else if (data && data.length > 0 && data[0].organizations) {
+        setOrganization(data[0].organizations);
+        setRole(data[0].role);
+      } else {
+        setOrganization(null);
+        setRole("");
+      }
+
+      setLoading(false);
+    }
+
+    loadOrganization();
+    return () => {
+      cancelled = true;
+    };
+  }, [userId]);
+
+  return {
+    organization,
+    role,
+    setOrganization,
+    setRole,
+    error,
+    setError,
+    loading,
+    setLoading,
+  };
 }
 
 /* ------------------------------------------------------------------ */
@@ -301,8 +370,56 @@ function Sidebar({ active, setActive, open, close }) {
   const { user, signOut } = useAuth();
   const displayName = getDisplayName(user);
 
+  const {
+    organization,
+    role,
+    setOrganization,
+    setRole,
+    error: organizationError,
+    setError: setOrganizationError,
+    loading: loadingOrganization,
+    setLoading: setLoadingOrganization,
+  } = useWorkspaceMembership();
+  const [organizationName, setOrganizationName] = useState("");
+  const [creatingOrganization, setCreatingOrganization] = useState(false);
+
+  async function handleCreateOrganization(event) {
+    event.preventDefault();
+    setOrganizationError("");
+    setCreatingOrganization(true);
+
+    const { data: organizationId, error } = await supabase.rpc(
+      "create_organization",
+      { org_name: organizationName.trim() }
+    );
+
+    if (error) {
+      setOrganizationError(error.message);
+    } else {
+      const { data: createdOrganization, error: fetchError } = await supabase
+        .from("organizations")
+        .select("id, name")
+        .eq("id", organizationId)
+        .single();
+
+      if (fetchError) {
+        setOrganizationError(fetchError.message);
+      } else {
+        setOrganization(createdOrganization);
+        setRole("owner");
+        setOrganizationName("");
+      }
+    }
+
+    setCreatingOrganization(false);
+    setLoadingOrganization(false);
+  }
+
+  const roleLabel = role ? role.charAt(0).toUpperCase() + role.slice(1) : "";
+
   const links = [
     { id: "Overview", icon: "grid" },
+    { id: "Chatbots", icon: "bot" },
     { id: "Knowledge sources", icon: "book" },
     { id: "Embed center", icon: "code" },
     { id: "Assistant settings", icon: "sliders" },
@@ -319,11 +436,38 @@ function Sidebar({ active, setActive, open, close }) {
         </a>
 
         <div className="workspace-label">WORKSPACE</div>
-        <button className="workspace-switcher">
-          <span className="workspace-avatar">V</span>
-          <span className="workspace-copy"><strong>Varikode Studio</strong><small>Free plan</small></span>
-          <span className="chevron">⌄</span>
-        </button>
+
+        {loadingOrganization ? (
+          <div className="workspace-card workspace-skeleton" aria-hidden="true" />
+        ) : organization ? (
+          <>
+            <div className="workspace-card">
+              <div className="workspace-avatar">{organization.name[0].toUpperCase()}</div>
+              <div className="workspace-copy">
+                <strong>{organization.name}</strong>
+                <small>{roleLabel}</small>
+              </div>
+            </div>
+            {organizationError && <p className="org-error" role="alert">{organizationError}</p>}
+          </>
+        ) : (
+          <form className="org-form" onSubmit={handleCreateOrganization}>
+            <p className="org-help">Create your organization to get started.</p>
+            <input
+              className="org-input"
+              value={organizationName}
+              onChange={(event) => setOrganizationName(event.target.value)}
+              placeholder="Organization name"
+              aria-label="Organization name"
+              maxLength={60}
+              required
+            />
+            <button className="org-button" type="submit" disabled={creatingOrganization}>
+              {creatingOrganization ? "Creating..." : "Create organization"}
+            </button>
+            {organizationError && <p className="org-error" role="alert">{organizationError}</p>}
+          </form>
+        )}
 
         <div className="nav-label">PLATFORM</div>
         <nav className="nav-list" aria-label="Main navigation">
@@ -354,7 +498,7 @@ function Sidebar({ active, setActive, open, close }) {
             <div className="profile-avatar">{displayName[0].toUpperCase()}</div>
             <div className="profile-copy">
               <strong className="profile-name">{displayName}</strong>
-              <small>Admin</small>
+              <small>{roleLabel || "Member"}</small>
             </div>
             <button
               className="profile-menu"
@@ -415,6 +559,442 @@ function AssistantAvatar({ assistant, size = 28 }) {
         <span>{(assistant.name || "A")[0].toUpperCase()}</span>
       )}
     </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Chatbot management                                                  */
+/* ------------------------------------------------------------------ */
+const EMPTY_CHATBOT_FORM = {
+  name: "",
+  description: "",
+  welcome_message: "",
+  theme: "ocean",
+};
+
+function ChatbotManagement() {
+  const {
+    organization,
+    role,
+    error: organizationError,
+    loading: loadingOrganization,
+  } = useWorkspaceMembership();
+  const [chatbots, setChatbots] = useState([]);
+  const [loadingChatbots, setLoadingChatbots] = useState(false);
+  const [chatbotError, setChatbotError] = useState("");
+  const [success, setSuccess] = useState("");
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [formOpen, setFormOpen] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [form, setForm] = useState(EMPTY_CHATBOT_FORM);
+  const [formError, setFormError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [busyId, setBusyId] = useState(null);
+
+  const canManage = role === "owner" || role === "admin";
+
+  useEffect(() => {
+    if (!organization?.id) {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadChatbots() {
+      setLoadingChatbots(true);
+      setChatbotError("");
+
+      const { data, error } = await supabase
+        .from("chatbots")
+        .select("id, organization_id, name, description, welcome_message, theme, status, created_at, updated_at")
+        .eq("organization_id", organization.id)
+        .order("created_at", { ascending: false });
+
+      if (cancelled) return;
+
+      if (error) {
+        setChatbotError(error.message);
+        setChatbots([]);
+      } else {
+        setChatbots(data || []);
+      }
+
+      setLoadingChatbots(false);
+    }
+
+    loadChatbots();
+    return () => {
+      cancelled = true;
+    };
+  }, [organization?.id]);
+
+  const filteredChatbots = chatbots.filter((chatbot) => {
+    const query = search.trim().toLowerCase();
+    const matchesSearch =
+      !query ||
+      chatbot.name.toLowerCase().includes(query) ||
+      (chatbot.description || "").toLowerCase().includes(query);
+    const matchesStatus = statusFilter === "all" || chatbot.status === statusFilter;
+    return matchesSearch && matchesStatus;
+  });
+
+  function openCreateForm() {
+    setEditing(null);
+    setForm(EMPTY_CHATBOT_FORM);
+    setFormError("");
+    setSuccess("");
+    setFormOpen(true);
+  }
+
+  function openEditForm(chatbot) {
+    setEditing(chatbot);
+    setForm({
+      name: chatbot.name || "",
+      description: chatbot.description || "",
+      welcome_message: chatbot.welcome_message || "",
+      theme: chatbot.theme || "ocean",
+    });
+    setFormError("");
+    setSuccess("");
+    setFormOpen(true);
+  }
+
+  function closeForm() {
+    if (saving) return;
+    setFormOpen(false);
+    setEditing(null);
+    setFormError("");
+  }
+
+  async function handleSubmit(event) {
+    event.preventDefault();
+    setFormError("");
+    setSuccess("");
+
+    const name = form.name.trim();
+    if (!name) {
+      setFormError("Chatbot name is required.");
+      return;
+    }
+
+    if (!organization?.id) {
+      setFormError("Create an organization before managing chatbots.");
+      return;
+    }
+
+    if (!canManage) {
+      setFormError("Owner or admin permissions are required.");
+      return;
+    }
+
+    const duplicate = chatbots.some(
+      (chatbot) =>
+        chatbot.id !== editing?.id &&
+        chatbot.name.trim().toLowerCase() === name.toLowerCase()
+    );
+    if (duplicate) {
+      setFormError("A chatbot with this name already exists in this workspace.");
+      return;
+    }
+
+    setSaving(true);
+
+    const payload = {
+      name,
+      description: form.description.trim() || null,
+      welcome_message: form.welcome_message.trim() || null,
+      theme: form.theme,
+    };
+
+    const result = editing
+      ? await supabase
+          .from("chatbots")
+          .update(payload)
+          .eq("id", editing.id)
+          .select("id, organization_id, name, description, welcome_message, theme, status, created_at, updated_at")
+          .single()
+      : await supabase
+          .from("chatbots")
+          .insert({
+            ...payload,
+            organization_id: organization.id,
+            status: "draft",
+          })
+          .select("id, organization_id, name, description, welcome_message, theme, status, created_at, updated_at")
+          .single();
+
+    setSaving(false);
+
+    if (result.error) {
+      setFormError(result.error.message);
+      return;
+    }
+
+    setChatbots((current) =>
+      editing
+        ? current.map((chatbot) => (chatbot.id === result.data.id ? result.data : chatbot))
+        : [result.data, ...current]
+    );
+    setFormOpen(false);
+    setEditing(null);
+    setSuccess(editing ? "Chatbot updated." : "Chatbot created.");
+  }
+
+  async function toggleStatus(chatbot) {
+    if (!canManage) return;
+
+    const nextStatus = chatbot.status === "published" ? "draft" : "published";
+    setBusyId(chatbot.id);
+    setChatbotError("");
+    setSuccess("");
+
+    const { data, error } = await supabase
+      .from("chatbots")
+      .update({ status: nextStatus })
+      .eq("id", chatbot.id)
+      .select("id, organization_id, name, description, welcome_message, theme, status, created_at, updated_at")
+      .single();
+
+    setBusyId(null);
+
+    if (error) {
+      setChatbotError(error.message);
+      return;
+    }
+
+    setChatbots((current) => current.map((item) => (item.id === data.id ? data : item)));
+    setSuccess(nextStatus === "published" ? "Chatbot published." : "Chatbot unpublished.");
+  }
+
+  async function deleteChatbot(chatbot) {
+    if (!canManage) return;
+
+    const confirmed = window.confirm(`Delete "${chatbot.name}"? This cannot be undone.`);
+    if (!confirmed) return;
+
+    setBusyId(chatbot.id);
+    setChatbotError("");
+    setSuccess("");
+
+    const { error } = await supabase
+      .from("chatbots")
+      .delete()
+      .eq("id", chatbot.id);
+
+    setBusyId(null);
+
+    if (error) {
+      setChatbotError(error.message);
+      return;
+    }
+
+    setChatbots((current) => current.filter((item) => item.id !== chatbot.id));
+    setSuccess("Chatbot deleted.");
+  }
+
+  const showEmptySearch = !loadingChatbots && chatbots.length > 0 && filteredChatbots.length === 0;
+
+  return (
+    <>
+      <Topbar title="Chatbots" />
+      <main className="main-content">
+        <section className="welcome-row chatbot-heading">
+          <div>
+            <div className="eyebrow"><span className="status-dot" /> CHATBOT MANAGEMENT</div>
+            <h1>Chatbots</h1>
+            <p className="welcome-subtitle">Create, publish, and manage the assistants available to your workspace.</p>
+          </div>
+          <button className="primary-button" type="button" onClick={openCreateForm} disabled={!canManage || !organization}>
+            <Icon name="plus" size={16} />
+            Create chatbot
+          </button>
+        </section>
+
+        {(organizationError || chatbotError || success || (!loadingOrganization && organization && !canManage)) && (
+          <div className="chatbot-notices" aria-live="polite">
+            {organizationError && <p className="notice error">{organizationError}</p>}
+            {chatbotError && <p className="notice error">{chatbotError}</p>}
+            {success && <p className="notice success">{success}</p>}
+            {!loadingOrganization && organization && !canManage && (
+              <p className="notice">You can view chatbots. Owner or admin permissions are required to make changes.</p>
+            )}
+          </div>
+        )}
+
+        {loadingOrganization ? (
+          <article className="panel chatbot-empty">
+            <span className="chatbot-empty-icon"><Icon name="bot" size={24} /></span>
+            <strong>Loading workspace</strong>
+            <p>Checking your organization membership.</p>
+          </article>
+        ) : !organization ? (
+          <article className="panel chatbot-empty">
+            <span className="chatbot-empty-icon"><Icon name="bot" size={24} /></span>
+            <strong>Create an organization first</strong>
+            <p>Your chatbots are scoped to an organization. Use the workspace card in the sidebar to create one.</p>
+          </article>
+        ) : (
+          <>
+            <section className="chatbot-toolbar">
+              <label className="chatbot-search">
+                <Icon name="search" size={16} />
+                <input
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder="Search chatbots"
+                  aria-label="Search chatbots"
+                />
+              </label>
+
+              <div className="chatbot-filters" aria-label="Filter chatbots by status">
+                {["all", "published", "draft"].map((status) => (
+                  <button
+                    key={status}
+                    type="button"
+                    className={statusFilter === status ? "active" : ""}
+                    onClick={() => setStatusFilter(status)}
+                  >
+                    {status === "all" ? "All" : status.charAt(0).toUpperCase() + status.slice(1)}
+                  </button>
+                ))}
+              </div>
+            </section>
+
+            {loadingChatbots ? (
+              <section className="chatbot-grid" aria-label="Loading chatbots">
+                {[0, 1, 2].map((item) => (
+                  <article className="panel chatbot-card chatbot-card-skeleton" key={item} />
+                ))}
+              </section>
+            ) : chatbots.length === 0 ? (
+              <article className="panel chatbot-empty">
+                <span className="chatbot-empty-icon"><Icon name="bot" size={24} /></span>
+                <strong>No chatbots yet</strong>
+                <p>Create your first chatbot, keep it as a draft while configuring it, then publish when it is ready.</p>
+                <button className="primary-button" type="button" onClick={openCreateForm} disabled={!canManage}>
+                  <Icon name="plus" size={16} />
+                  Create chatbot
+                </button>
+              </article>
+            ) : showEmptySearch ? (
+              <article className="panel chatbot-empty">
+                <span className="chatbot-empty-icon"><Icon name="search" size={24} /></span>
+                <strong>No matching chatbots</strong>
+                <p>Try a different search term or status filter.</p>
+              </article>
+            ) : (
+              <section className="chatbot-grid" aria-label="Chatbots">
+                {filteredChatbots.map((chatbot) => (
+                  <article className="panel chatbot-card" key={chatbot.id}>
+                    <div className="chatbot-card-top">
+                      <span className="chatbot-avatar"><Icon name="bot" size={18} /></span>
+                      <span className={`chatbot-status ${chatbot.status}`}>{chatbot.status}</span>
+                    </div>
+                    <h2>{chatbot.name}</h2>
+                    <p>{chatbot.description || "No description added yet."}</p>
+                    <dl>
+                      <div>
+                        <dt>Created</dt>
+                        <dd>{formatDate(chatbot.created_at)}</dd>
+                      </div>
+                      <div>
+                        <dt>Theme</dt>
+                        <dd>{chatbot.theme}</dd>
+                      </div>
+                    </dl>
+                    {chatbot.welcome_message && (
+                      <blockquote>{chatbot.welcome_message}</blockquote>
+                    )}
+                    <div className="chatbot-actions">
+                      <button className="subtle-button" type="button" onClick={() => openEditForm(chatbot)} disabled={!canManage || busyId === chatbot.id}>
+                        Edit
+                      </button>
+                      <button className="subtle-button" type="button" onClick={() => toggleStatus(chatbot)} disabled={!canManage || busyId === chatbot.id}>
+                        {chatbot.status === "published" ? "Unpublish" : "Publish"}
+                      </button>
+                      <button className="subtle-button danger" type="button" onClick={() => deleteChatbot(chatbot)} disabled={!canManage || busyId === chatbot.id}>
+                        <Icon name="trash" size={14} />
+                        Delete
+                      </button>
+                    </div>
+                  </article>
+                ))}
+              </section>
+            )}
+          </>
+        )}
+      </main>
+
+      {formOpen && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={closeForm}>
+          <form className="chatbot-modal panel" onSubmit={handleSubmit} onMouseDown={(event) => event.stopPropagation()}>
+            <div className="modal-head">
+              <div>
+                <div className="eyebrow">{editing ? "EDIT CHATBOT" : "NEW CHATBOT"}</div>
+                <h2>{editing ? "Update chatbot" : "Create chatbot"}</h2>
+              </div>
+              <button type="button" className="icon-button" onClick={closeForm} aria-label="Close dialog">x</button>
+            </div>
+
+            <label className="field-label" htmlFor="chatbot-name">Chatbot name</label>
+            <input
+              id="chatbot-name"
+              className="chatbot-input"
+              value={form.name}
+              onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
+              placeholder="Sales concierge"
+              maxLength={80}
+              required
+            />
+
+            <label className="field-label" htmlFor="chatbot-description">Description</label>
+            <textarea
+              id="chatbot-description"
+              className="chatbot-input"
+              value={form.description}
+              onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))}
+              placeholder="Handles product questions and routes high-intent leads."
+              maxLength={280}
+              rows={3}
+            />
+
+            <label className="field-label" htmlFor="chatbot-welcome">Welcome message</label>
+            <textarea
+              id="chatbot-welcome"
+              className="chatbot-input"
+              value={form.welcome_message}
+              onChange={(event) => setForm((current) => ({ ...current, welcome_message: event.target.value }))}
+              placeholder="Hi, I can help you find the right solution today."
+              maxLength={360}
+              rows={3}
+            />
+
+            <label className="field-label" htmlFor="chatbot-theme">Appearance theme</label>
+            <select
+              id="chatbot-theme"
+              className="chatbot-input"
+              value={form.theme}
+              onChange={(event) => setForm((current) => ({ ...current, theme: event.target.value }))}
+            >
+              <option value="ocean">Ocean</option>
+              <option value="slate">Slate</option>
+              <option value="mint">Mint</option>
+              <option value="violet">Violet</option>
+            </select>
+
+            {formError && <p className="modal-error" role="alert">{formError}</p>}
+
+            <div className="modal-actions">
+              <button type="button" className="subtle-button" onClick={closeForm} disabled={saving}>Cancel</button>
+              <button type="submit" className="primary-button" disabled={saving}>
+                {saving ? "Saving..." : editing ? "Save changes" : "Create chatbot"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -907,9 +1487,10 @@ export default function App() {
       <div className="main-shell">
         <button className="mobile-menu" onClick={() => setMenuOpen(true)} aria-label="Open menu"><Icon name="menu" /></button>
 
+        {active === "Chatbots" && <ChatbotManagement />}
         {active === "Chats" && <ChatHistory assistant={assistant} chats={chats} onDelete={deleteChat} />}
         {active === "Assistant settings" && <AssistantSettings assistant={assistant} onSave={saveAssistant} />}
-        {active !== "Chats" && active !== "Assistant settings" && <Overview active={active} setActive={setActive} />}
+        {active !== "Chatbots" && active !== "Chats" && active !== "Assistant settings" && <Overview active={active} setActive={setActive} />}
       </div>
       <ChatWidget assistant={assistant} onSaveChat={saveChat} />
     </div>
