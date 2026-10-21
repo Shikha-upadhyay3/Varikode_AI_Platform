@@ -12,6 +12,7 @@ create table public.memberships (
   role text not null default 'member'
     check (role in ('owner', 'admin', 'member')),
   created_at timestamptz not null default now(),
+  
   primary key (organization_id, user_id)
 );
 

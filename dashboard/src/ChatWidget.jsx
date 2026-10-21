@@ -1,13 +1,35 @@
 import { useState, useRef, useEffect } from "react";
+import { supabase } from "./lib/supabaseClient" // path wahi likho jo AuthContext.jsx me hai
 
 const BLUE = "#1e90ff";
 const TEAL = "#14b8a6";
 const GRADIENT = `linear-gradient(135deg, ${BLUE}, ${TEAL})`;
 
-// Demo reply. Later this will call the backend API (the AI key must never be in frontend code).
-async function getReply() {
-  await new Promise((resolve) => setTimeout(resolve, 900));
-  return "Thanks for your message! This is a demo reply. Live AI answers will be connected through the backend.";
+async function createConversation(organizationId) {
+  const { data: { user } } = await supabase.auth.getUser();
+  const { data, error } = await supabase
+    .from("conversations")
+    .insert({
+      organization_id: organizationId,
+      user_id: user.id,
+      model: "gemini-2.0-flash",
+      system_prompt: "You are Varikode Assistant, the support assistant for Varikode.tech. Answer only about Varikode. If you don't know, say so and offer to connect a human. Keep answers short and friendly.",
+    })
+    .select()
+    .single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+async function askAI(conversationId, content) {
+  const { data, error } = await supabase.functions.invoke("chat", {
+    body: { conversationId, content },
+  });
+  if (error) {
+    const detail = await error.context?.json?.().catch(() => null);
+    throw new Error(detail?.error?.message ?? "Something went wrong. Please try again.");
+  }
+  return data.reply;
 }
 
 // Logo ho to image dikhao, warna naam ka pehla akshar
@@ -30,7 +52,7 @@ function Avatar({ assistant, size }) {
   );
 }
 
-export default function ChatWidget({ assistant = { name: "AI Assistant", logo: null }, onSaveChat }) {
+export default function ChatWidget({ assistant = { name: "AI Assistant", logo: null }, onSaveChat, organizationId, onMessageSaved }) {
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState([
     { role: "assistant", text: "Hi! How can I help you today?" },
@@ -39,6 +61,7 @@ export default function ChatWidget({ assistant = { name: "AI Assistant", logo: n
   const [loading, setLoading] = useState(false);
   const endRef = useRef(null);
   const sessionId = useRef(null);
+  const conversationId = useRef(null);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -55,13 +78,16 @@ export default function ChatWidget({ assistant = { name: "AI Assistant", logo: n
       who: "Website visitor",
       status: "Resolved",
       updatedAt: Date.now(),
-      messages: messages.map((m) => ({ from: m.role === "user" ? "user" : "ai", text: m.text })),
+      messages: messages
+        .filter((m) => m.role !== "error")
+        .map((m) => ({ from: m.role === "user" ? "user" : "ai", text: m.text })),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages]);
 
   function newChat() {
     sessionId.current = null;
+    conversationId.current = null;
     setMessages([{ role: "assistant", text: "Hi! How can I help you today?" }]);
     setInput("");
   }
@@ -73,9 +99,21 @@ export default function ChatWidget({ assistant = { name: "AI Assistant", logo: n
     setMessages((m) => [...m, { role: "user", text }]);
     setInput("");
     setLoading(true);
-    const reply = await getReply(text);
-    setMessages((m) => [...m, { role: "assistant", text: reply }]);
-    setLoading(false);
+    try {
+      if (!organizationId) throw new Error("Please select or create a workspace first.");
+      // Conversation sirf pehle message par banti hai
+      if (!conversationId.current) {
+        const convo = await createConversation(organizationId);
+        conversationId.current = convo.id;
+      }
+      const reply = await askAI(conversationId.current, text);
+      setMessages((m) => [...m, { role: "assistant", text: reply }]);
+      onMessageSaved?.();
+    } catch (err) {
+      setMessages((m) => [...m, { role: "error", text: err.message || "Something went wrong." }]);
+    } finally {
+      setLoading(false);
+    }
   }
 
   // Closed state: small "Ask AI" bar in the bottom-right corner
@@ -130,9 +168,15 @@ export default function ChatWidget({ assistant = { name: "AI Assistant", logo: n
             style={{
               alignSelf: m.role === "user" ? "flex-end" : "flex-start",
               maxWidth: "80%", padding: "9px 13px", borderRadius: 14, fontSize: 14, lineHeight: 1.45,
-              background: m.role === "user" ? GRADIENT : "rgba(255,255,255,0.08)",
-              border: m.role === "user" ? "none" : "1px solid rgba(255,255,255,0.1)",
-              color: m.role === "user" ? "white" : "#dbe5f1",
+              background:
+                m.role === "user" ? GRADIENT
+                : m.role === "error" ? "rgba(239,68,68,0.15)"
+                : "rgba(255,255,255,0.08)",
+              border:
+                m.role === "user" ? "none"
+                : m.role === "error" ? "1px solid rgba(239,68,68,0.4)"
+                : "1px solid rgba(255,255,255,0.1)",
+              color: m.role === "user" ? "white" : m.role === "error" ? "#fca5a5" : "#dbe5f1",
             }}
           >
             {m.text}
