@@ -63,6 +63,12 @@ function SmallIcon({ name }) {
       </>
     ),
     plus: <path d="M12 5v14m-7-7h14" />,
+    refresh: (
+      <>
+        <path d="M21 12a9 9 0 1 1-3-6.7L21 8" />
+        <path d="M21 3v5h-5" />
+      </>
+    ),
   };
 
   return (
@@ -195,10 +201,73 @@ export default function KnowledgeSources({
   }, [chatbotId]);
 
   const visibleSources = chatbotId ? sources : [];
+  const hasProcessing = visibleSources.some((source) => source.status === "processing");
+
+  // 3. Jab tak koi source "processing" hai, status har 5 second me refresh karo
+  useEffect(() => {
+    if (!hasProcessing || !chatbotId) return;
+
+    const timer = setInterval(async () => {
+      const { data } = await supabase
+        .from("knowledge_sources")
+        .select(SOURCE_COLUMNS)
+        .eq("chatbot_id", chatbotId)
+        .order("created_at", { ascending: false });
+      if (data) setSources(data);
+    }, 5000);
+
+    return () => clearInterval(timer);
+  }, [hasProcessing, chatbotId]);
 
   function clearMessages() {
     setError("");
     setSuccess("");
+  }
+
+  async function refreshSource(sourceId) {
+    const { data } = await supabase
+      .from("knowledge_sources")
+      .select(SOURCE_COLUMNS)
+      .eq("id", sourceId)
+      .maybeSingle();
+    if (data) {
+      setSources((current) => current.map((item) => (item.id === sourceId ? data : item)));
+    }
+    return data;
+  }
+
+  // Edge Function ko call karo: text nikalna, chunking, embeddings
+  async function processSource(sourceId) {
+    setSources((current) =>
+      current.map((item) =>
+        item.id === sourceId ? { ...item, status: "processing", error_message: null } : item
+      )
+    );
+
+    const { error: invokeError } = await supabase.functions.invoke(
+      "process-knowledge-source",
+      { body: { source_id: sourceId } }
+    );
+
+    // Function khud DB me status (ready/failed) likhta hai, isliye wahi dobara padho
+    const latest = await refreshSource(sourceId);
+    if (!latest) return;
+
+    if (latest.status === "ready") {
+      setSuccess("Source processed and ready to use.");
+    } else if (latest.status === "failed") {
+      setError(latest.error_message || "Processing failed. Please try again.");
+    } else if (invokeError) {
+      setError(
+        "Could not start processing. Check that the Edge Function is deployed, then use Process now."
+      );
+    }
+  }
+
+  async function handleRetry(source) {
+    if (!canManage) return;
+    clearMessages();
+    await processSource(source.id);
   }
 
   async function handleFileChange(event) {
@@ -264,7 +333,8 @@ export default function KnowledgeSources({
     }
 
     setSources((current) => [data, ...current]);
-    setSuccess("File uploaded.");
+    setSuccess("File uploaded. Processing...");
+    processSource(data.id);
   }
 
   async function handleAddWebsite(event) {
@@ -317,7 +387,8 @@ export default function KnowledgeSources({
 
     setSources((current) => [data, ...current]);
     setWebsiteUrl("");
-    setSuccess("Website added.");
+    setSuccess("Website added. Processing...");
+    processSource(data.id);
   }
 
   async function handleDelete(source) {
@@ -328,7 +399,7 @@ export default function KnowledgeSources({
 
     clearMessages();
     setBusyId(source.id);
-// First, delete the row (chunks are deleted automatically)
+    // First, delete the row (chunks are deleted automatically)
     const { error: deleteError } = await supabase
       .from("knowledge_sources")
       .delete()
@@ -450,7 +521,7 @@ export default function KnowledgeSources({
 
               <article className="panel ks-card">
                 <h2>Add a website</h2>
-                <p>Paste a public page link. We save it now and read it when processing is connected.</p>
+                <p>Paste a public page link. We read the page and index its text for your assistant.</p>
                 <form className="ks-row" onSubmit={handleAddWebsite}>
                   <input
                     className="chatbot-input"
@@ -503,8 +574,16 @@ export default function KnowledgeSources({
                       <small>
                         {source.source_type === "website" ? "Website" : "File"}
                         {source.metadata?.size ? ` · ${formatSize(source.metadata.size)}` : ""}
+                        {source.status === "ready" && source.metadata?.chunk_count
+                          ? ` · ${source.metadata.chunk_count} chunks`
+                          : ""}
                         {` · Added ${formatDate(source.created_at)}`}
                       </small>
+                      {source.status === "ready" && source.metadata?.truncated && (
+                        <span className="ks-error" style={{ color: "#f5a623" }}>
+                          Very large source: only the first part was indexed.
+                        </span>
+                      )}
                       {source.status === "failed" && source.error_message && (
                         <span className="ks-error">{source.error_message}</span>
                       )}
@@ -512,6 +591,17 @@ export default function KnowledgeSources({
                     <span className={`ks-badge ${source.status}`}>
                       {STATUS_LABELS[source.status] || source.status}
                     </span>
+                    {(source.status === "failed" || source.status === "pending") && (
+                      <button
+                        type="button"
+                        className="subtle-button"
+                        onClick={() => handleRetry(source)}
+                        disabled={!canManage || busyId === source.id}
+                      >
+                        <SmallIcon name="refresh" />
+                        {source.status === "failed" ? "Retry" : "Process now"}
+                      </button>
+                    )}
                     <button
                       type="button"
                       className="subtle-button danger"
@@ -527,8 +617,8 @@ export default function KnowledgeSources({
             </article>
 
             <p className="ks-hint">
-              Sources stay as "Pending" until the AI processing service (text extraction and
-              embeddings) is connected in a later step.
+              Each source is read, split into chunks and indexed so your assistant can search it.
+              This usually takes a few seconds.
             </p>
           </>
         )}
