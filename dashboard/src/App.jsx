@@ -4,6 +4,7 @@ import "./theme.css";
 import ChatWidget from "./ChatWidget";
 import { useAuth } from "./AuthContext";
 import { supabase } from "./lib/supabaseClient";
+import KnowledgeSources from "./KnowledgeSources";
 
 function Icon({ name, size = 18 }) {
   const paths = {
@@ -1447,6 +1448,19 @@ function persistChats(list) {
     // storage full ya blocked
   }
 }
+function KnowledgeSourcesPage() {
+  const { organization, role, error, loading } = useWorkspaceMembership();
+
+  return (
+    <KnowledgeSources
+      topbar={<Topbar title="Knowledge sources" />}
+      organization={organization}
+      role={role}
+      orgError={error}
+      loadingOrg={loading}
+    />
+  );
+}
 
 export default function App() {
   const [active, setActive] = useState("Overview");
@@ -1490,7 +1504,8 @@ export default function App() {
         {active === "Chatbots" && <ChatbotManagement />}
         {active === "Chats" && <ChatHistory assistant={assistant} chats={chats} onDelete={deleteChat} />}
         {active === "Assistant settings" && <AssistantSettings assistant={assistant} onSave={saveAssistant} />}
-        {active !== "Chatbots" && active !== "Chats" && active !== "Assistant settings" && <Overview active={active} setActive={setActive} />}
+        {active === "Knowledge sources" && <KnowledgeSourcesPage />}
+        {active !== "Chatbots" && active !== "Knowledge sources" && active !== "Chats" && active !== "Assistant settings" && <Overview active={active} setActive={setActive} />}
       </div>
       <ChatWidget assistant={assistant} onSaveChat={saveChat} />
     </div>
