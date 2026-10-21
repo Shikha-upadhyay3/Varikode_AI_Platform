@@ -4,6 +4,7 @@ import "./theme.css";
 import ChatWidget from "./ChatWidget";
 import { useAuth } from "./AuthContext"
 import { supabase } from "./lib/supabaseClient";
+import { useChats } from "./useChats";
 
 function Icon({ name, size = 18 }) {
   const paths = {
@@ -464,6 +465,184 @@ function Topbar({ title }) {
   );
 }
 
+function EmbedCenter({ organization }) {
+  const [open, setOpen] = useState(false);
+  const [chatbots, setChatbots] = useState([]);
+  const [selectedId, setSelectedId] = useState("");
+  const [origins, setOrigins] = useState("");
+  const [snippet, setSnippet] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+
+  const selectedBot = chatbots.find((bot) => bot.id === selectedId);
+
+  async function ensurePublicKey(bot) {
+    if (bot.public_key) return bot.public_key;
+    const publicKey = `pk_${crypto.randomUUID().replaceAll("-", "").slice(0, 24)}`;
+    const { data, error: updateError } = await supabase
+      .from("chatbots")
+      .update({ public_key: publicKey })
+      .eq("id", bot.id)
+      .select("id, name, status, public_key, allowed_origins")
+      .single();
+    if (updateError) throw updateError;
+    setChatbots((current) => current.map((item) => item.id === data.id ? data : item));
+    return data.public_key;
+  }
+
+  function makeSnippet(bot, publicKey) {
+    const scriptUrl = new URL("/embed.js", window.location.origin).toString();
+    const apiUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/public-chat`;
+    return `<script src="${scriptUrl}" data-bot-key="${publicKey}" data-api="${apiUrl}" data-title="${bot.name}" defer></script>`;
+  }
+
+  async function openEmbedSetup() {
+    setOpen(true);
+    setLoading(true);
+    setError("");
+    setNotice("");
+    const { data, error: loadError } = await supabase
+      .from("chatbots")
+      .select("id, name, status, public_key, allowed_origins")
+      .eq("organization_id", organization.id)
+      .eq("status", "published")
+      .order("created_at", { ascending: false });
+    setLoading(false);
+    if (loadError) {
+      setError(loadError.message);
+      return;
+    }
+    setChatbots(data || []);
+    if (!data?.length) {
+      setSelectedId("");
+      setSnippet("");
+      setError("No published chatbot found. Publish a chatbot first, then return here.");
+      return;
+    }
+
+    const bot = data[0];
+    setSelectedId(bot.id);
+    setOrigins(bot.allowed_origins || "");
+    try {
+      const publicKey = await ensurePublicKey(bot);
+      setSnippet(makeSnippet(bot, publicKey));
+    } catch (keyError) {
+      setError(keyError.message || "Could not prepare a public key for this chatbot.");
+    }
+  }
+
+  async function selectBot(botId) {
+    setSelectedId(botId);
+    setSnippet("");
+    setError("");
+    const bot = chatbots.find((item) => item.id === botId);
+    if (!bot) return;
+    setOrigins(bot.allowed_origins || "");
+    try {
+      const publicKey = await ensurePublicKey(bot);
+      setSnippet(makeSnippet(bot, publicKey));
+    } catch (keyError) {
+      setError(keyError.message || "Could not prepare a public key for this chatbot.");
+    }
+  }
+
+  async function saveOrigins() {
+    setError("");
+    setNotice("");
+    const values = origins.split(",").map((value) => value.trim()).filter(Boolean);
+    if (!values.length) {
+      setError("Enter at least one allowed website origin, such as https://example.com.");
+      return;
+    }
+    try {
+      for (const value of values) {
+        const url = new URL(value);
+        if (!/^https?:$/.test(url.protocol) || url.origin !== value) throw new Error();
+      }
+    } catch {
+      setError("Use website origins only, e.g. https://example.com (no page path). Separate multiple origins with commas.");
+      return;
+    }
+
+    setSaving(true);
+    const { data, error: saveError } = await supabase
+      .from("chatbots")
+      .update({ allowed_origins: values.join(",") })
+      .eq("id", selectedId)
+      .select("id, name, status, public_key, allowed_origins")
+      .single();
+    setSaving(false);
+    if (saveError) {
+      setError(saveError.message);
+      return;
+    }
+    setChatbots((current) => current.map((item) => item.id === data.id ? data : item));
+    setNotice("Allowed websites saved.");
+  }
+
+  async function copySnippet() {
+    try {
+      await navigator.clipboard.writeText(snippet);
+      setNotice("Embed code copied.");
+    } catch {
+      setError("Clipboard access failed. Select and copy the code manually.");
+    }
+  }
+
+  return (
+    <>
+      <Topbar title="Embed center" />
+      <main className="main-content">
+        <section className="welcome-row">
+          <div>
+            <div className="eyebrow">VARIKODE AI PLATFORM</div>
+            <h1>Embed center</h1>
+            <p className="welcome-subtitle">Bring your AI assistant to your website with a simple embed.</p>
+          </div>
+          <button className="primary-button" type="button" onClick={openEmbedSetup} disabled={!organization?.id}>
+            <Icon name="plus" size={16} /> Get embed code
+          </button>
+        </section>
+      </main>
+
+      {open && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setOpen(false); }}>
+          <section className="panel chatbot-modal" role="dialog" aria-modal="true" aria-labelledby="embed-modal-title">
+            <div className="modal-head">
+              <div><div className="eyebrow">WEBSITE INSTALLATION</div><h2 id="embed-modal-title">Get embed code</h2></div>
+              <button type="button" className="icon-button" onClick={() => setOpen(false)} aria-label="Close dialog">×</button>
+            </div>
+            {loading ? <p>Loading published chatbots…</p> : chatbots.length > 0 && (
+              <>
+                <label className="field-label" htmlFor="embed-chatbot">Published chatbot</label>
+                <select id="embed-chatbot" className="chatbot-input" value={selectedId} onChange={(event) => selectBot(event.target.value)}>
+                  {chatbots.map((bot) => <option key={bot.id} value={bot.id}>{bot.name}</option>)}
+                </select>
+                <label className="field-label" htmlFor="allowed-origins">Allowed website origins</label>
+                <input id="allowed-origins" className="chatbot-input" value={origins} onChange={(event) => setOrigins(event.target.value)} placeholder="https://example.com" />
+                <p className="chatbot-help">Enter exact website origins (not page paths). For local testing, use {window.location.origin}.</p>
+                <div className="modal-actions">
+                  <button className="subtle-button" type="button" onClick={saveOrigins} disabled={saving || !selectedBot}>{saving ? "Saving…" : "Save websites"}</button>
+                </div>
+                {snippet && <>
+                  <label className="field-label" htmlFor="embed-snippet">Website embed code</label>
+                  <textarea id="embed-snippet" className="chatbot-input" rows={4} readOnly value={snippet} />
+                  <div className="modal-actions"><button className="primary-button" type="button" onClick={copySnippet}>Copy code</button></div>
+                </>}
+              </>
+            )}
+            {error && <p className="modal-error" role="alert">{error}</p>}
+            {notice && <p className="notice success" role="status">{notice}</p>}
+            <p className="chatbot-help">The script URL uses this dashboard host. A customer website can load it only after the dashboard is deployed publicly; localhost works for local testing.</p>
+          </section>
+        </div>
+      )}
+    </>
+  );
+}
+
 /* ------------------------------------------------------------------ */
 /* Assistant logo            */
 /* ------------------------------------------------------------------ */
@@ -705,7 +884,12 @@ const overviewCss = `
 
 function Overview({ active, setActive }) {
   const { user } = useAuth();
+  const { organization } = useWorkspaceMembership();
   const firstName = getDisplayName(user).split(/[ @]/)[0];
+
+  if (active === "Embed center") {
+    return <EmbedCenter organization={organization} />;
+  }
 
   if (active !== "Overview") {
     const details = {
@@ -943,10 +1127,12 @@ function persistChats(list) {
 }
 
 export default function App() {
+  const { organization } = useWorkspaceMembership();
+  const { chats, loading: loadingChats, error: chatsError, reload: reloadChats } = useChats(organization?.id);
   const [active, setActive] = useState("Overview");
   const [menuOpen, setMenuOpen] = useState(false);
   const [assistant, setAssistant] = useState(loadAssistant);
-  const [chats, setChats] = useState(loadChats);
+ // const [chats, setChats] = useState(loadChats);
 
   // Widget se aayi chat ko save/update karo
   const saveChat = (chat) => {
@@ -985,7 +1171,7 @@ export default function App() {
         {active === "Assistant settings" && <AssistantSettings assistant={assistant} onSave={saveAssistant} />}
         {active !== "Chats" && active !== "Assistant settings" && <Overview active={active} setActive={setActive} />}
       </div>
-      <ChatWidget assistant={assistant} onSaveChat={saveChat} />
+         <ChatWidget organizationId={organization?.id} assistant={assistant} onMessageSaved={reloadChats} />
     </div>
   );
 }
