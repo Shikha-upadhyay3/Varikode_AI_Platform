@@ -1,17 +1,19 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 
-const VISITOR_DAILY_LIMIT = 20;   
-const BOT_DAILY_LIMIT = 500;      
+const VISITOR_DAILY_LIMIT = 20;   // ek visitor ke din ke messages
+const BOT_DAILY_LIMIT = 500;      // ek bot ke total din ke messages (budget bachane ke liye)
 const HISTORY_LIMIT = 20;
-
 
 const MODEL = Deno.env.get("GEMINI_MODEL") ?? "gemini-3.6-flash";
 
-
+// Gemini ko jawab dene ke liye kul kitna time (retries ke saath)
 const GEMINI_TOTAL_TIMEOUT_MS = 25_000;
 
-
+// Ek reply me max kitne tokens
 const MAX_OUTPUT_TOKENS = 2048;
+
+// Apne status ke hisaab se badlo
+const PUBLISHED_STATUSES = ["published", "active"];
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -29,20 +31,19 @@ function corsHeaders(origin: string | null) {
   };
 }
 
-type GeminiResult = { ok: boolean; status: number; text: string };
-
 function timeoutError() {
   const e = new Error("Gemini timeout");
   e.name = "AbortError";
   return e;
 }
 
-
-async function callGemini(contents: unknown[], systemPrompt: string | null): Promise<GeminiResult> {
+// Gemini ko streaming mode me call karta hai.
+// 500/503 par max 2 retry (backoff ke saath), total time GEMINI_TOTAL_TIMEOUT_MS tak.
+async function callGemini(contents: unknown[], systemPrompt: string | null): Promise<Response> {
   const apiKey = Deno.env.get("GEMINI_API_KEY");
   if (!apiKey) throw new Error("MISSING_API_KEY");
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:streamGenerateContent?alt=sse`;
   const payload = JSON.stringify({
     ...(systemPrompt ? { systemInstruction: { parts: [{ text: systemPrompt }] } } : {}),
     contents,
@@ -50,7 +51,7 @@ async function callGemini(contents: unknown[], systemPrompt: string | null): Pro
   });
 
   const deadline = Date.now() + GEMINI_TOTAL_TIMEOUT_MS;
-  let last: GeminiResult | null = null;
+  let res: Response | null = null;
 
   for (let attempt = 0; attempt <= 2; attempt++) {
     const remaining = deadline - Date.now();
@@ -60,26 +61,25 @@ async function callGemini(contents: unknown[], systemPrompt: string | null): Pro
     const timer = setTimeout(() => ctrl.abort(), remaining);
     try {
       const started = Date.now();
-      const res = await fetch(url, {
+      res = await fetch(url, {
         method: "POST",
         signal: ctrl.signal,
         headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
         body: payload,
       });
-      const text = await res.text();
       console.log(`Gemini ${MODEL} attempt ${attempt + 1}: status ${res.status} in ${Date.now() - started}ms`);
-      last = { ok: res.ok, status: res.status, text };
     } finally {
       clearTimeout(timer);
     }
 
-   
-    if (last.status !== 500 && last.status !== 503) return last;
+    // Sirf server-side temporary errors par retry
+    if (res.status !== 500 && res.status !== 503) return res;
     const wait = 1000 * (attempt + 1);
-    if (attempt === 2 || deadline - Date.now() <= wait + 1500) return last;
+    if (attempt === 2 || deadline - Date.now() <= wait + 1500) return res;
+    await res.body?.cancel();
     await new Promise((r) => setTimeout(r, wait));
   }
-  return last!;
+  return res!;
 }
 
 Deno.serve(async (req) => {
@@ -89,44 +89,55 @@ Deno.serve(async (req) => {
     new Response(JSON.stringify(body), { status, headers: { ...h, "Content-Type": "application/json" } });
   const fail = (status: number, code: string, message: string) => json(status, { error: { code, message } });
 
-
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: h });
   if (req.method !== "POST") return fail(405, "METHOD_NOT_ALLOWED", "Use POST");
 
   try {
-    // 1. Validate
     const body = await req.json().catch(() => null);
     const publicKey = typeof body?.publicKey === "string" ? body.publicKey : "";
+    if (!publicKey) return fail(400, "VALIDATION_ERROR", "publicKey required");
+
+    // 1. Bot + published check
+    const { data: bot } = await admin.from("chatbots").select("*").eq("public_key", publicKey).maybeSingle();
+    if (!bot || !PUBLISHED_STATUSES.includes(String(bot.status))) {
+      return fail(404, "BOT_NOT_FOUND", "Chatbot not found");
+    }
+
+    // 2. Domain check
+    const allowed = String(bot.allowed_origins ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+    if (!allowed.includes("*") && (!origin || !allowed.includes(origin))) {
+      return fail(403, "ORIGIN_NOT_ALLOWED", "This website is not allowed to use this chatbot");
+    }
+
+    // 3. Config (widget load hote hi)
+    if (body?.action === "config") {
+      return json(200, {
+        name: bot.name,
+        welcomeMessage: bot.welcome_message ?? "Hi! How can I help you today?",
+        theme: bot.theme ?? null,
+      });
+    }
+
+    // 4. Validate
     const visitorId = typeof body?.visitorId === "string" ? body.visitorId : "";
     const conversationId = typeof body?.conversationId === "string" ? body.conversationId : null;
     const message = typeof body?.message === "string" ? body.message.trim() : "";
-    if (!publicKey) return fail(400, "VALIDATION_ERROR", "publicKey required");
     if (!UUID.test(visitorId)) return fail(400, "VALIDATION_ERROR", "Invalid visitorId");
     if (!message || message.length > 2000) return fail(400, "VALIDATION_ERROR", "Message must be 1 to 2000 characters");
 
-  
-    const { data: bot } = await admin.from("chatbots").select("*").eq("public_key", publicKey).maybeSingle();
-    if (!bot) return fail(404, "BOT_NOT_FOUND", "Chatbot not found");
-
-    // 3. Domain check
-    const allowed = String(bot.allowed_origins ?? "").split(",").map((s) => s.trim()).filter(Boolean);
-    if (!allowed.includes("*") && (!origin || !allowed.includes(origin)))
-      return fail(403, "ORIGIN_NOT_ALLOWED", "This website is not allowed to use this chatbot");
-
-   
+    // 5. Limits
     const day = new Date().toISOString().slice(0, 10);
     const { data: mine } = await admin.from("visitor_usage_daily").select("requests")
       .eq("chatbot_id", bot.id).eq("visitor_id", visitorId).eq("day", day).maybeSingle();
     if (mine && mine.requests >= VISITOR_DAILY_LIMIT)
       return fail(429, "QUOTA_EXCEEDED", "Daily message limit reached. Please come back tomorrow.");
-
     const { data: all } = await admin.from("visitor_usage_daily").select("requests")
       .eq("chatbot_id", bot.id).eq("day", day);
     const botTotal = (all ?? []).reduce((s: number, r: { requests: number }) => s + r.requests, 0);
     if (botTotal >= BOT_DAILY_LIMIT)
       return fail(429, "BOT_BUSY", "This assistant is unavailable right now. Please try later.");
 
-
+    // 6. History
     let history: { role: string; content: string }[] = [];
     let convoId: string | null = null;
     if (conversationId) {
@@ -139,15 +150,15 @@ Deno.serve(async (req) => {
       history = (recent ?? []).reverse();
     }
 
-    // 6. Gemini
+    // 7. Gemini
     const contents = [...history, { role: "user", content: message }].map((m) => ({
       role: m.role === "assistant" ? "model" : "user",
       parts: [{ text: m.content }],
     }));
 
-    let result: GeminiResult;
+    let res: Response;
     try {
-      result = await callGemini(contents, bot.system_prompt ?? null);
+      res = await callGemini(contents, bot.system_prompt ?? null);
     } catch (e) {
       const err = e as Error;
       if (err.message === "MISSING_API_KEY") {
@@ -159,60 +170,89 @@ Deno.serve(async (req) => {
       return fail(502, "AI_UNREACHABLE", "Could not reach the AI service.");
     }
 
-    if (!result.ok) {
-      
-      console.error("Gemini error", result.status, "model:", MODEL, result.text);
-      if (result.status === 429) return fail(503, "AI_BUSY", "AI is busy, try again shortly.");
-      if (result.status === 400 || result.status === 403 || result.status === 404)
+    if (!res.ok || !res.body) {
+      console.error("Gemini error", res.status, "model:", MODEL, await res.text());
+      if (res.status === 429) return fail(503, "AI_BUSY", "AI is busy, try again shortly.");
+      if (res.status === 400 || res.status === 403 || res.status === 404)
         return fail(502, "AI_AUTH_ERROR", "AI service is misconfigured.");
       return fail(502, "AI_UPSTREAM_ERROR", "The AI service returned an error.");
     }
 
-    let ai: any;
-    try {
-      ai = JSON.parse(result.text);
-    } catch {
-      console.error("Gemini returned non-JSON:", result.text.slice(0, 500));
-      return fail(502, "AI_UPSTREAM_ERROR", "The AI service returned an error.");
-    }
+    // 8. Stream -> SSE
+    const enc = new TextEncoder();
+    const geminiBody = res.body;
+    const stream = new ReadableStream({
+      async start(controller) {
+        const send = (obj: unknown) => controller.enqueue(enc.encode(`data: ${JSON.stringify(obj)}\n\n`));
+        let full = "";
+        let pt = 0;
+        let ct = 0;
+        let finishReason = "";
+        try {
+          const reader = geminiBody.getReader();
+          const dec = new TextDecoder();
+          let buf = "";
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buf += dec.decode(value, { stream: true });
+            const lines = buf.split("\n");
+            buf = lines.pop() ?? "";
+            for (const line of lines) {
+              if (!line.startsWith("data:")) continue;
+              const payload = line.slice(5).trim();
+              if (!payload) continue;
+              const chunk = JSON.parse(payload);
+              const text = chunk.candidates?.[0]?.content?.parts
+                ?.map((p: { text?: string }) => p.text ?? "").join("") ?? "";
+              if (text) { full += text; send({ type: "delta", text }); }
+              if (chunk.candidates?.[0]?.finishReason) finishReason = chunk.candidates[0].finishReason;
+              if (chunk.usageMetadata) {
+                pt = chunk.usageMetadata.promptTokenCount ?? pt;
+                ct = chunk.usageMetadata.candidatesTokenCount ?? ct;
+              }
+            }
+          }
+          if (!full) {
+            console.error("Empty reply. finishReason:", finishReason);
+            send({ type: "error", code: "EMPTY_AI_RESPONSE", message: "The AI returned an empty response. Please try again." });
+            return;
+          }
+          if (finishReason === "MAX_TOKENS") {
+            console.warn("Reply MAX_TOKENS par kat gaya, MAX_OUTPUT_TOKENS badhane par vichar karein");
+          }
+          if (!convoId) {
+            const { data: created, error: cErr } = await admin.from("conversations").insert({
+              organization_id: bot.organization_id, chatbot_id: bot.id, visitor_id: visitorId,
+              user_id: null, title: message.slice(0, 50),
+              system_prompt: bot.system_prompt ?? null, model: MODEL,
+            }).select("id").single();
+            if (cErr) throw cErr;
+            convoId = created.id;
+          }
+          const now = Date.now();
+          const { error: mErr } = await admin.from("messages").insert([
+            { conversation_id: convoId, role: "user", content: message, created_at: new Date(now).toISOString() },
+            { conversation_id: convoId, role: "assistant", content: full, prompt_tokens: pt,
+              completion_tokens: ct, created_at: new Date(now + 1).toISOString() },
+          ]);
+          if (mErr) throw mErr;
+          await admin.rpc("record_visitor_usage", { p_bot: bot.id, p_visitor: visitorId, p_tokens: pt + ct });
+          await admin.from("conversations").update({ updated_at: new Date().toISOString() }).eq("id", convoId);
+          send({ type: "done", conversationId: convoId });
+        } catch (e) {
+          console.error("Stream error:", e);
+          send({ type: "error", code: "STREAM_FAILED", message: "The connection was interrupted. Please try again." });
+        } finally {
+          controller.close();
+        }
+      },
+    });
 
-    const candidate = ai.candidates?.[0];
-    const reply = candidate?.content?.parts?.map((p: { text?: string }) => p.text ?? "").join("");
-    if (!reply) {
-      console.error("Empty reply. finishReason:", candidate?.finishReason, "blockReason:", ai.promptFeedback?.blockReason);
-      return fail(502, "EMPTY_AI_RESPONSE", "The AI returned an empty response");
-    }
-    if (candidate?.finishReason === "MAX_TOKENS") {
-      console.warn("Reply MAX_TOKENS par kat gaya, MAX_OUTPUT_TOKENS badhane par vichar karein");
-    }
-    const pt = ai.usageMetadata?.promptTokenCount ?? 0;
-    const ct = ai.usageMetadata?.candidatesTokenCount ?? 0;
-
-    
-    if (!convoId) {
-      const { data: created, error: cErr } = await admin.from("conversations").insert({
-        organization_id: bot.organization_id,
-        chatbot_id: bot.id,
-        visitor_id: visitorId,
-        user_id: null,
-        title: message.slice(0, 50),
-        system_prompt: bot.system_prompt ?? null,
-        model: MODEL,
-      }).select("id").single();
-      if (cErr) throw cErr;
-      convoId = created.id;
-    }
-    const now = Date.now();
-    const { error: mErr } = await admin.from("messages").insert([
-      { conversation_id: convoId, role: "user", content: message, created_at: new Date(now).toISOString() },
-      { conversation_id: convoId, role: "assistant", content: reply, prompt_tokens: pt,
-        completion_tokens: ct, created_at: new Date(now + 1).toISOString() },
-    ]);
-    if (mErr) throw mErr;
-    await admin.rpc("record_visitor_usage", { p_bot: bot.id, p_visitor: visitorId, p_tokens: pt + ct });
-    await admin.from("conversations").update({ updated_at: new Date().toISOString() }).eq("id", convoId);
-
-    return json(200, { conversationId: convoId, reply });
+    return new Response(stream, {
+      status: 200,
+      headers: { ...h, "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
+    });
   } catch (e) {
     console.error("Unhandled:", e);
     return fail(500, "INTERNAL_ERROR", "Something went wrong");
