@@ -1,9 +1,18 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 
-const VISITOR_DAILY_LIMIT = 20;   // ek visitor ke din ke messages
-const BOT_DAILY_LIMIT = 500;      // ek bot ke total din ke messages (budget bachane ke liye)
+const VISITOR_DAILY_LIMIT = 20;   
+const BOT_DAILY_LIMIT = 500;      
 const HISTORY_LIMIT = 20;
-const MODEL = Deno.env.get("GEMINI_MODEL") ?? "gemini-3.8-flash";
+
+
+const MODEL = Deno.env.get("GEMINI_MODEL") ?? "gemini-3.6-flash";
+
+
+const GEMINI_TOTAL_TIMEOUT_MS = 25_000;
+
+
+const MAX_OUTPUT_TOKENS = 2048;
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const admin = createClient(
@@ -20,30 +29,57 @@ function corsHeaders(origin: string | null) {
   };
 }
 
-async function callGemini(contents: unknown[], systemPrompt: string | null) {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 30_000);
-  try {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
-    const init = {
-      method: "POST",
-      signal: ctrl.signal,
-      headers: { "Content-Type": "application/json", "x-goog-api-key": Deno.env.get("GEMINI_API_KEY")! },
-      body: JSON.stringify({
-        ...(systemPrompt ? { systemInstruction: { parts: [{ text: systemPrompt }] } } : {}),
-        contents,
-        generationConfig: { maxOutputTokens: 500 },
-      }),
-    };
-    let res = await fetch(url, init);
-    for (let i = 1; i <= 2 && (res.status === 500 || res.status === 503); i++) {
-      await new Promise((r) => setTimeout(r, 1000 * i));
-      res = await fetch(url, init);
+type GeminiResult = { ok: boolean; status: number; text: string };
+
+function timeoutError() {
+  const e = new Error("Gemini timeout");
+  e.name = "AbortError";
+  return e;
+}
+
+
+async function callGemini(contents: unknown[], systemPrompt: string | null): Promise<GeminiResult> {
+  const apiKey = Deno.env.get("GEMINI_API_KEY");
+  if (!apiKey) throw new Error("MISSING_API_KEY");
+
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
+  const payload = JSON.stringify({
+    ...(systemPrompt ? { systemInstruction: { parts: [{ text: systemPrompt }] } } : {}),
+    contents,
+    generationConfig: { maxOutputTokens: MAX_OUTPUT_TOKENS },
+  });
+
+  const deadline = Date.now() + GEMINI_TOTAL_TIMEOUT_MS;
+  let last: GeminiResult | null = null;
+
+  for (let attempt = 0; attempt <= 2; attempt++) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw timeoutError();
+
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), remaining);
+    try {
+      const started = Date.now();
+      const res = await fetch(url, {
+        method: "POST",
+        signal: ctrl.signal,
+        headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+        body: payload,
+      });
+      const text = await res.text();
+      console.log(`Gemini ${MODEL} attempt ${attempt + 1}: status ${res.status} in ${Date.now() - started}ms`);
+      last = { ok: res.ok, status: res.status, text };
+    } finally {
+      clearTimeout(timer);
     }
-    return res;
-  } finally {
-    clearTimeout(timer);
+
+   
+    if (last.status !== 500 && last.status !== 503) return last;
+    const wait = 1000 * (attempt + 1);
+    if (attempt === 2 || deadline - Date.now() <= wait + 1500) return last;
+    await new Promise((r) => setTimeout(r, wait));
   }
+  return last!;
 }
 
 Deno.serve(async (req) => {
@@ -53,7 +89,7 @@ Deno.serve(async (req) => {
     new Response(JSON.stringify(body), { status, headers: { ...h, "Content-Type": "application/json" } });
   const fail = (status: number, code: string, message: string) => json(status, { error: { code, message } });
 
-  // Browser preflight: bot ka pata abhi nahi, asli check POST par hota hai
+
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: h });
   if (req.method !== "POST") return fail(405, "METHOD_NOT_ALLOWED", "Use POST");
 
@@ -68,7 +104,7 @@ Deno.serve(async (req) => {
     if (!UUID.test(visitorId)) return fail(400, "VALIDATION_ERROR", "Invalid visitorId");
     if (!message || message.length > 2000) return fail(400, "VALIDATION_ERROR", "Message must be 1 to 2000 characters");
 
-    // 2. Bot dhundo
+  
     const { data: bot } = await admin.from("chatbots").select("*").eq("public_key", publicKey).maybeSingle();
     if (!bot) return fail(404, "BOT_NOT_FOUND", "Chatbot not found");
 
@@ -77,7 +113,7 @@ Deno.serve(async (req) => {
     if (!allowed.includes("*") && (!origin || !allowed.includes(origin)))
       return fail(403, "ORIGIN_NOT_ALLOWED", "This website is not allowed to use this chatbot");
 
-    // 4. Limits (visitor aur poore bot ke liye)
+   
     const day = new Date().toISOString().slice(0, 10);
     const { data: mine } = await admin.from("visitor_usage_daily").select("requests")
       .eq("chatbot_id", bot.id).eq("visitor_id", visitorId).eq("day", day).maybeSingle();
@@ -90,7 +126,7 @@ Deno.serve(async (req) => {
     if (botTotal >= BOT_DAILY_LIMIT)
       return fail(429, "BOT_BUSY", "This assistant is unavailable right now. Please try later.");
 
-    // 5. Purani conversation (agar hai) aur history
+
     let history: { role: string; content: string }[] = [];
     let convoId: string | null = null;
     if (conversationId) {
@@ -108,26 +144,51 @@ Deno.serve(async (req) => {
       role: m.role === "assistant" ? "model" : "user",
       parts: [{ text: m.content }],
     }));
-    let res: Response;
+
+    let result: GeminiResult;
     try {
-      res = await callGemini(contents, bot.system_prompt ?? null);
+      result = await callGemini(contents, bot.system_prompt ?? null);
     } catch (e) {
-      if ((e as Error).name === "AbortError") return fail(504, "AI_TIMEOUT", "The AI took too long. Please try again.");
+      const err = e as Error;
+      if (err.message === "MISSING_API_KEY") {
+        console.error("GEMINI_API_KEY secret set nahi hai");
+        return fail(500, "AI_NOT_CONFIGURED", "AI service is not configured.");
+      }
+      if (err.name === "AbortError") return fail(504, "AI_TIMEOUT", "The AI took too long. Please try again.");
+      console.error("Gemini fetch failed:", err);
       return fail(502, "AI_UNREACHABLE", "Could not reach the AI service.");
     }
-    if (!res.ok) {
-      console.error("Gemini error", res.status, await res.text());
-      if (res.status === 429) return fail(503, "AI_BUSY", "AI is busy, try again shortly.");
-      if (res.status === 400 || res.status === 403) return fail(502, "AI_AUTH_ERROR", "AI service is misconfigured.");
+
+    if (!result.ok) {
+      
+      console.error("Gemini error", result.status, "model:", MODEL, result.text);
+      if (result.status === 429) return fail(503, "AI_BUSY", "AI is busy, try again shortly.");
+      if (result.status === 400 || result.status === 403 || result.status === 404)
+        return fail(502, "AI_AUTH_ERROR", "AI service is misconfigured.");
       return fail(502, "AI_UPSTREAM_ERROR", "The AI service returned an error.");
     }
-    const ai = await res.json();
-    const reply = ai.candidates?.[0]?.content?.parts?.map((p: { text?: string }) => p.text ?? "").join("");
-    if (!reply) return fail(502, "EMPTY_AI_RESPONSE", "The AI returned an empty response");
+
+    let ai: any;
+    try {
+      ai = JSON.parse(result.text);
+    } catch {
+      console.error("Gemini returned non-JSON:", result.text.slice(0, 500));
+      return fail(502, "AI_UPSTREAM_ERROR", "The AI service returned an error.");
+    }
+
+    const candidate = ai.candidates?.[0];
+    const reply = candidate?.content?.parts?.map((p: { text?: string }) => p.text ?? "").join("");
+    if (!reply) {
+      console.error("Empty reply. finishReason:", candidate?.finishReason, "blockReason:", ai.promptFeedback?.blockReason);
+      return fail(502, "EMPTY_AI_RESPONSE", "The AI returned an empty response");
+    }
+    if (candidate?.finishReason === "MAX_TOKENS") {
+      console.warn("Reply MAX_TOKENS par kat gaya, MAX_OUTPUT_TOKENS badhane par vichar karein");
+    }
     const pt = ai.usageMetadata?.promptTokenCount ?? 0;
     const ct = ai.usageMetadata?.candidatesTokenCount ?? 0;
 
-    // 7. Save (nayi conversation sirf success ke baad banti hai)
+    
     if (!convoId) {
       const { data: created, error: cErr } = await admin.from("conversations").insert({
         organization_id: bot.organization_id,
