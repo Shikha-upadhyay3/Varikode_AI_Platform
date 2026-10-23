@@ -13,7 +13,7 @@
   function save() { try { localStorage.setItem(STORE, JSON.stringify(state)); } catch (e) {} }
   save();
 
-  // LOADING: pehle config. Published nahi / domain allowed nahi => widget dikhao hi mat
+  // LOADING: 
   async function loadConfig() {
     try {
       var res = await fetch(API, {
