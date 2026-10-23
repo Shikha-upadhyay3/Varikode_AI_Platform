@@ -13,7 +13,7 @@ export function useChats(organizationId) {
     setLoading(true);
     const { data, error } = await supabase
       .from("conversations")
-      .select("id, title, updated_at, messages(role, content, created_at)")
+      .select("id, title, status, updated_at, messages(role, content, created_at)")
       .eq("organization_id", organizationId)
       .order("updated_at", { ascending: false })
       .limit(50);
@@ -28,7 +28,7 @@ export function useChats(organizationId) {
           id: c.id,
           title: c.title,
           who: "Website visitor",
-          status: "Resolved",
+          status: c.status === "handoff" ? "Handoff" : "Resolved",
           updatedAt: new Date(c.updated_at).getTime(),
           messages: [...c.messages]
             .sort((a, b) => new Date(a.created_at) - new Date(b.created_at))

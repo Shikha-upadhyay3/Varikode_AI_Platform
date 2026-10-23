@@ -3,6 +3,7 @@
   var botKey = script.getAttribute("data-bot-key");
   var API = script.getAttribute("data-api");
   var title = script.getAttribute("data-title") || "Chat with us";
+  var color = "#1e90ff";
   if (!botKey || !API) { console.error("Chatbot: data-bot-key and data-api are required"); return; }
 
   var STORE = "chatbot_" + botKey;
@@ -21,7 +22,9 @@
     '.btn{position:fixed;bottom:20px;right:20px;width:56px;height:56px;border-radius:50%;border:0;background:linear-gradient(135deg,#1e90ff,#14b8a6);color:#fff;font-size:24px;cursor:pointer;box-shadow:0 4px 12px rgba(0,0,0,.3);z-index:2147483647}' +
     '.box{position:fixed;bottom:90px;right:20px;width:340px;max-width:calc(100vw - 40px);height:460px;max-height:70vh;background:#fff;border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,.25);display:none;flex-direction:column;overflow:hidden;font-family:system-ui,sans-serif;z-index:2147483647}' +
     '.box.open{display:flex}' +
-    '.head{background:linear-gradient(135deg,#1e90ff,#14b8a6);color:#fff;padding:12px 16px;font-weight:600}' +
+          '.head{background:' + color + ';color:#fff;padding:12px 16px;font-weight:600;display:flex;align-items:center;justify-content:space-between;gap:8px}' +
+      '.human{border:1px solid rgba(255,255,255,.7);background:transparent;color:#fff;border-radius:999px;padding:3px 10px;font-size:11px;cursor:pointer}' +
+      '.human:disabled{opacity:.5;cursor:default}' +
     '.msgs{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:8px;background:#f8fafc}' +
     '.m{max-width:80%;padding:8px 12px;border-radius:12px;font-size:14px;line-height:1.4;white-space:pre-wrap;word-wrap:break-word}' +
     '.u{align-self:flex-end;background:#1e90ff;color:#fff}' +
@@ -32,7 +35,7 @@
     'button.send{border:0;background:transparent;color:#1e90ff;font-weight:600;padding:0 16px;cursor:pointer}' +
     '</style>' +
     '<button class="btn" aria-label="Open chat">💬</button>' +
-    '<div class="box"><div class="head"></div><div class="msgs"></div>' +
+    '<div class="box" role="dialog" aria-label="Chat"><div class="head"><span class="ttl"></span><button class="human">Talk to a human</button></div><div class="msgs" aria-live="polite"></div>' +
     '<div class="row"><input placeholder="Type a message..." maxlength="2000"/><button class="send">Send</button></div></div>';
 
   var btn = root.querySelector(".btn");
@@ -40,7 +43,8 @@
   var msgs = root.querySelector(".msgs");
   var input = root.querySelector("input");
   var sendBtn = root.querySelector(".send");
-  root.querySelector(".head").textContent = title;
+      root.querySelector(".ttl").textContent = title;
+    var humanBtn = root.querySelector(".human");
 
   function add(text, cls) {
     var d = document.createElement("div");
@@ -52,6 +56,28 @@
   }
 
   add("Hi! How can I help you today?", "a");
+      humanBtn.onclick = async function () {
+      if (!state.conversationId) {
+        add("Send a message first, then I can connect you to a human.", "a");
+        return;
+      }
+      humanBtn.disabled = true;
+      try {
+        var r = await fetch(API, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            publicKey: botKey, action: "handoff",
+            visitorId: state.visitorId, conversationId: state.conversationId,
+          }),
+        });
+        if (!r.ok) throw new Error("fail");
+        add("Done! A human agent will follow up. You can keep chatting meanwhile.", "a");
+      } catch (e) {
+        humanBtn.disabled = false;
+        add("Could not reach a human right now. Please try again.", "a");
+      }
+    };
   btn.onclick = function () {
     box.classList.toggle("open");
     if (box.classList.contains("open")) input.focus();

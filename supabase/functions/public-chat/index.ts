@@ -58,37 +58,136 @@ Deno.serve(async (req) => {
   if (req.method !== "POST") return fail(405, "METHOD_NOT_ALLOWED", "Use POST");
 
   try {
-    // 1. Validate
+    // 1.     // 1. Validate request
     const body = await req.json().catch(() => null);
+    const action = typeof body?.action === "string" ? body.action : "message";
     const publicKey = typeof body?.publicKey === "string" ? body.publicKey : "";
     const visitorId = typeof body?.visitorId === "string" ? body.visitorId : "";
     const conversationId = typeof body?.conversationId === "string" ? body.conversationId : null;
     const message = typeof body?.message === "string" ? body.message.trim() : "";
-    if (!publicKey) return fail(400, "VALIDATION_ERROR", "publicKey required");
-    if (!UUID.test(visitorId)) return fail(400, "VALIDATION_ERROR", "Invalid visitorId");
-    if (!message || message.length > 2000) return fail(400, "VALIDATION_ERROR", "Message must be 1 to 2000 characters");
 
-    // 2. Bot dhundo
-    const { data: bot } = await admin.from("chatbots").select("*").eq("public_key", publicKey).maybeSingle();
+    if (!publicKey) return fail(400, "VALIDATION_ERROR", "publicKey required");
+
+    // 2. Find chatbot
+    const { data: bot, error: botError } = await admin
+      .from("chatbots")
+      .select("*")
+      .eq("public_key", publicKey)
+      .maybeSingle();
+
+    if (botError) throw botError;
     if (!bot) return fail(404, "BOT_NOT_FOUND", "Chatbot not found");
 
-    // 3. Domain check
-    const allowed = String(bot.allowed_origins ?? "").split(",").map((s) => s.trim()).filter(Boolean);
-    if (!allowed.includes("*") && (!origin || !allowed.includes(origin)))
+    // 3. Check website origin
+    const allowed = String(bot.allowed_origins ?? "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean);
+
+    if (!allowed.includes("*") && (!origin || !allowed.includes(origin))) {
       return fail(403, "ORIGIN_NOT_ALLOWED", "This website is not allowed to use this chatbot");
+    }
 
-    // 4. Limits (visitor aur poore bot ke liye)
-    const day = new Date().toISOString().slice(0, 10);
-    const { data: mine } = await admin.from("visitor_usage_daily").select("requests")
-      .eq("chatbot_id", bot.id).eq("visitor_id", visitorId).eq("day", day).maybeSingle();
-    if (mine && mine.requests >= VISITOR_DAILY_LIMIT)
-      return fail(429, "QUOTA_EXCEEDED", "Daily message limit reached. Please come back tomorrow.");
+    // 3a. Widget configuration
+    if (action === "config") {
+      return json(200, {
+        name: bot.name,
+        welcomeMessage: bot.welcome_message ?? "Hi! How can I help you today?",
+        theme: bot.theme ?? null,
+      });
+    }
 
-    const { data: all } = await admin.from("visitor_usage_daily").select("requests")
-      .eq("chatbot_id", bot.id).eq("day", day);
-    const botTotal = (all ?? []).reduce((s: number, r: { requests: number }) => s + r.requests, 0);
-    if (botTotal >= BOT_DAILY_LIMIT)
-      return fail(429, "BOT_BUSY", "This assistant is unavailable right now. Please try later.");
+    // 3b. Save a visitor's request to talk to a human
+    if (action === "handoff") {
+      if (!UUID.test(visitorId)) {
+        return fail(400, "VALIDATION_ERROR", "Invalid visitorId");
+      }
+
+      let handoffConversationId: string;
+
+      if (conversationId) {
+        if (!UUID.test(conversationId)) {
+          return fail(400, "VALIDATION_ERROR", "Invalid conversationId");
+        }
+
+        const { data: existingConversation, error: conversationError } = await admin
+          .from("conversations")
+          .select("id")
+          .eq("id", conversationId)
+          .eq("chatbot_id", bot.id)
+          .eq("visitor_id", visitorId)
+          .maybeSingle();
+
+        if (conversationError) throw conversationError;
+        if (!existingConversation) {
+          return fail(404, "NOT_FOUND", "Conversation not found");
+        }
+
+        handoffConversationId = existingConversation.id;
+      } else {
+        const { data: createdConversation, error: createError } = await admin
+          .from("conversations")
+          .insert({
+            organization_id: bot.organization_id,
+            chatbot_id: bot.id,
+            visitor_id: visitorId,
+            user_id: null,
+            title: "Human support request",
+            system_prompt: bot.system_prompt ?? null,
+            model: MODEL,
+          })
+          .select("id")
+          .single();
+
+        if (createError) throw createError;
+        handoffConversationId = createdConversation.id;
+      }
+
+      const handoffMessage = message
+        ? `Visitor requested human support: ${message.slice(0, 2000)}`
+        : "Visitor requested to talk to a human.";
+      const now = Date.now();
+
+      const { error: saveHandoffError } = await admin.from("messages").insert([
+        {
+          conversation_id: handoffConversationId,
+          role: "user",
+          content: handoffMessage,
+          created_at: new Date(now).toISOString(),
+        },
+        {
+          conversation_id: handoffConversationId,
+          role: "assistant",
+          content: "Your request has been recorded for the support team.",
+          created_at: new Date(now + 1).toISOString(),
+        },
+      ]);
+
+      if (saveHandoffError) throw saveHandoffError;
+
+      await admin
+        .from("conversations")
+        .update({ updated_at: new Date().toISOString() })
+        .eq("id", handoffConversationId);
+
+      return json(200, {
+        conversationId: handoffConversationId,
+        handoff: true,
+        reply: "Your request has been recorded for the support team.",
+      });
+    }
+
+    if (action !== "message") {
+      return fail(400, "VALIDATION_ERROR", "Unknown action");
+    }
+
+    // 4. Validate a normal chat message
+    if (!UUID.test(visitorId)) {
+      return fail(400, "VALIDATION_ERROR", "Invalid visitorId");
+    }
+    if (!message || message.length > 2000) {
+      return fail(400, "VALIDATION_ERROR", "Message must be 1 to 2000 characters");
+    }
 
     // 5. Purani conversation (agar hai) aur history
     let history: { role: string; content: string }[] = [];
