@@ -6,6 +6,7 @@ import { useAuth } from "./AuthContext";
 import { supabase } from "./lib/supabaseClient";
 import KnowledgeSources from "./KnowledgeSources";
 import { useChats } from "./useChats";
+import { useOverviewStats, pctChange } from "./useOverviewStats";
 
 function Icon({ name, size = 18 }) {
   const paths = {
@@ -57,6 +58,27 @@ function formatDate(value) {
     day: "numeric",
     year: "numeric",
   }).format(new Date(value));
+}
+
+const CHATBOT_COLUMNS =
+  "id, organization_id, name, description, welcome_message, theme, status, created_at, updated_at, logo_url, collect_leads";
+const LOGO_BUCKET = "chatbot-logos";
+
+async function uploadChatbotLogo(chatbotId, file) {
+  const ext = file.type === "image/png" ? "png" : file.type === "image/webp" ? "webp" : "jpg";
+  const path = `${chatbotId}/logo-${Date.now()}.${ext}`;
+  const { error } = await supabase.storage
+    .from(LOGO_BUCKET)
+    .upload(path, file, { contentType: file.type, upsert: false, cacheControl: "3600" });
+  if (error) throw error;
+  const { data } = supabase.storage.from(LOGO_BUCKET).getPublicUrl(path);
+  return data.publicUrl;
+}
+
+function logoPathFromUrl(url) {
+  const marker = `/${LOGO_BUCKET}/`;
+  const i = url ? url.indexOf(marker) : -1;
+  return i === -1 ? null : decodeURIComponent(url.slice(i + marker.length).split("?")[0]);
 }
 
 function useWorkspaceMembership() {
@@ -745,11 +767,14 @@ function AssistantAvatar({ assistant, size = 28 }) {
 /* ------------------------------------------------------------------ */
 /* Chatbot management                                                  */
 /* ------------------------------------------------------------------ */
+
+
 const EMPTY_CHATBOT_FORM = {
   name: "",
   description: "",
   welcome_message: "",
   theme: "ocean",
+  collect_leads: true,
 };
 
 function ChatbotManagement() {
@@ -771,8 +796,35 @@ function ChatbotManagement() {
   const [formError, setFormError] = useState("");
   const [saving, setSaving] = useState(false);
   const [busyId, setBusyId] = useState(null);
+  const [logoFile, setLogoFile] = useState(null);
+  const [logoPreview, setLogoPreview] = useState("");
+  const [removeLogo, setRemoveLogo] = useState(false);
 
   const canManage = role === "owner" || role === "admin";
+
+  function handleLogoPick(event) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) {
+      setFormError("Logo must be a PNG, JPG or WebP image.");
+      return;
+    }
+    if (file.size > 1024 * 1024) {
+      setFormError("Logo must be smaller than 1 MB.");
+      return;
+    }
+    setFormError("");
+    setLogoFile(file);
+    setRemoveLogo(false);
+    setLogoPreview(URL.createObjectURL(file));
+  }
+
+  function clearLogo() {
+    setLogoFile(null);
+    setLogoPreview("");
+    setRemoveLogo(true);
+  }
 
   useEffect(() => {
     if (!organization?.id) {
@@ -787,7 +839,7 @@ function ChatbotManagement() {
 
       const { data, error } = await supabase
         .from("chatbots")
-        .select("id, organization_id, name, description, welcome_message, theme, status, created_at, updated_at")
+        .select(CHATBOT_COLUMNS)
         .eq("organization_id", organization.id)
         .order("created_at", { ascending: false });
 
@@ -822,6 +874,9 @@ function ChatbotManagement() {
   function openCreateForm() {
     setEditing(null);
     setForm(EMPTY_CHATBOT_FORM);
+    setLogoFile(null);
+    setLogoPreview("");
+    setRemoveLogo(false);
     setFormError("");
     setSuccess("");
     setFormOpen(true);
@@ -834,7 +889,11 @@ function ChatbotManagement() {
       description: chatbot.description || "",
       welcome_message: chatbot.welcome_message || "",
       theme: chatbot.theme || "ocean",
+      collect_leads: chatbot.collect_leads ?? true,
     });
+    setLogoFile(null);
+    setLogoPreview(chatbot.logo_url || "");
+    setRemoveLogo(false);
     setFormError("");
     setSuccess("");
     setFormOpen(true);
@@ -885,6 +944,7 @@ function ChatbotManagement() {
       description: form.description.trim() || null,
       welcome_message: form.welcome_message.trim() || null,
       theme: form.theme,
+      collect_leads: form.collect_leads,
     };
 
     const result = editing
@@ -892,7 +952,7 @@ function ChatbotManagement() {
           .from("chatbots")
           .update(payload)
           .eq("id", editing.id)
-          .select("id, organization_id, name, description, welcome_message, theme, status, created_at, updated_at")
+          .select(CHATBOT_COLUMNS)
           .single()
       : await supabase
           .from("chatbots")
@@ -901,24 +961,45 @@ function ChatbotManagement() {
             organization_id: organization.id,
             status: "draft",
           })
-          .select("id, organization_id, name, description, welcome_message, theme, status, created_at, updated_at")
+          .select(CHATBOT_COLUMNS)
           .single();
 
-    setSaving(false);
-
     if (result.error) {
+      setSaving(false);
       setFormError(result.error.message);
       return;
     }
 
+    let savedBot = result.data;
+    let logoWarning = "";
+
+    if (logoFile || removeLogo) {
+      try {
+        const nextUrl = logoFile ? await uploadChatbotLogo(savedBot.id, logoFile) : null;
+        const { data: withLogo, error: logoError } = await supabase
+          .from("chatbots")
+          .update({ logo_url: nextUrl })
+          .eq("id", savedBot.id)
+          .select(CHATBOT_COLUMNS)
+          .single();
+        if (logoError) throw logoError;
+        const oldPath = logoPathFromUrl(savedBot.logo_url);
+        if (oldPath) await supabase.storage.from(LOGO_BUCKET).remove([oldPath]);
+        savedBot = withLogo;
+      } catch (logoErr) {
+        logoWarning = ` The logo could not be saved: ${logoErr.message}`;
+      }
+    }
+
+    setSaving(false);
     setChatbots((current) =>
       editing
-        ? current.map((chatbot) => (chatbot.id === result.data.id ? result.data : chatbot))
-        : [result.data, ...current]
+        ? current.map((chatbot) => (chatbot.id === savedBot.id ? savedBot : chatbot))
+        : [savedBot, ...current]
     );
     setFormOpen(false);
     setEditing(null);
-    setSuccess(editing ? "Chatbot updated." : "Chatbot created.");
+    setSuccess((editing ? "Chatbot updated." : "Chatbot created.") + logoWarning);
   }
 
   async function toggleStatus(chatbot) {
@@ -933,7 +1014,7 @@ function ChatbotManagement() {
       .from("chatbots")
       .update({ status: nextStatus })
       .eq("id", chatbot.id)
-      .select("id, organization_id, name, description, welcome_message, theme, status, created_at, updated_at")
+      .select(CHATBOT_COLUMNS)
       .single();
 
     setBusyId(null);
@@ -1068,7 +1149,17 @@ function ChatbotManagement() {
                 {filteredChatbots.map((chatbot) => (
                   <article className="panel chatbot-card" key={chatbot.id}>
                     <div className="chatbot-card-top">
-                      <span className="chatbot-avatar"><Icon name="bot" size={18} /></span>
+                      <span className="chatbot-avatar">
+                        {chatbot.logo_url ? (
+                          <img
+                            src={chatbot.logo_url}
+                            alt=""
+                            style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: "inherit" }}
+                          />
+                        ) : (
+                          <Icon name="bot" size={18} />
+                        )}
+                      </span>
                       <span className={`chatbot-status ${chatbot.status}`}>{chatbot.status}</span>
                     </div>
                     <h2>{chatbot.name}</h2>
@@ -1163,6 +1254,38 @@ function ChatbotManagement() {
               <option value="violet">Violet</option>
             </select>
 
+            <label className="field-label" htmlFor="chatbot-logo">Chatbot logo</label>
+            <div className="logo-picker">
+              <span className="logo-preview">
+                {logoPreview ? <img src={logoPreview} alt="" /> : <Icon name="bot" size={22} />}
+              </span>
+              <div>
+                <input
+                  id="chatbot-logo"
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  onChange={handleLogoPick}
+                />
+                {logoPreview && (
+                  <button type="button" className="subtle-button" onClick={clearLogo}>
+                    Remove logo
+                  </button>
+                )}
+                <small>PNG, JPG or WebP, up to 1 MB. Shown on the chat button and header.</small>
+              </div>
+            </div>
+
+            <label className="check-row">
+              <input
+                type="checkbox"
+                checked={form.collect_leads}
+                onChange={(event) =>
+                  setForm((current) => ({ ...current, collect_leads: event.target.checked }))
+                }
+              />
+              Ask visitors for name, email and phone before chatting (all optional)
+            </label>
+
             {formError && <p className="modal-error" role="alert">{formError}</p>}
 
             <div className="modal-actions">
@@ -1177,6 +1300,8 @@ function ChatbotManagement() {
     </>
   );
 }
+
+
 
 /* ------------------------------------------------------------------ */
 /* Chats page                                                          */
@@ -1386,11 +1511,46 @@ const overviewCss = `
 @media (max-width: 820px) { .charts-row { grid-template-columns: 1fr; } }
 @media (max-width: 650px) { .bottom-row { grid-template-columns: 1fr; } }
 `;
+function getGreeting() {
+  const h = new Date().getHours();
+  if (h >= 5 && h < 12) return "Good morning";
+  if (h >= 12 && h < 17) return "Good afternoon";
+  if (h >= 17 && h < 21) return "Good evening";
+  return "Good night";
+}
 
 function Overview({ active, setActive }) {
   const { user } = useAuth();
   const { organization } = useWorkspaceMembership();
   const firstName = getDisplayName(user).split(/[ @]/)[0];
+    const greeting = getGreeting();
+    const { stats } = useOverviewStats(organization?.id, 30);
+
+  const daily = (stats?.daily ?? []).map((d) => d.count);
+    const areaData = (stats?.daily ?? []).map((d) => ({
+    label: new Date(d.day + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+    value: d.count,
+  }));
+  const sparkOf = (arr) => (arr.length >= 2 ? arr.slice(-12) : [0, 0]);
+  const convChange = stats ? pctChange(stats.conversations.current, stats.conversations.previous) : null;
+  const msgChange = stats ? pctChange(stats.messages_answered.current, stats.messages_answered.previous) : null;
+  const fmtChange = (v) => (v === null ? "New" : `${v >= 0 ? "↗" : "↘"} ${Math.abs(v)}%`);
+  const sourcesTotal = stats?.knowledge_sources?.total ?? 0;
+  const MONTHLY_LIMIT = 10000;
+  const monthMessages = stats?.month_messages ?? 0;
+    const resolvedN = stats?.outcomes?.resolved ?? 0;
+  const handoffN = stats?.outcomes?.handoff ?? 0;
+  const outcomeTotal = resolvedN + handoffN;
+  const resRate = outcomeTotal ? Math.round((resolvedN / outcomeTotal) * 1000) / 10 : 0;
+  const prevRes = stats?.outcomes?.prev_resolved ?? 0;
+  const prevTotal = prevRes + (stats?.outcomes?.prev_handoff ?? 0);
+  const prevRate = prevTotal ? (prevRes / prevTotal) * 100 : 0;
+  const resChange = prevTotal ? pctChange(resRate, prevRate) : null;
+  const barData = (stats?.daily ?? []).slice(-14).map((d) => ({
+    label: new Date(d.day + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+    a: d.resolved,
+    b: d.handoff,
+  }));
 
   if (active === "Embed center") {
     return <EmbedCenter organization={organization} />;
@@ -1421,7 +1581,7 @@ function Overview({ active, setActive }) {
         <section className="welcome-row">
           <div>
             <div className="eyebrow"><span className="status-dot" /> YOUR AI WORKSPACE</div>
-            <h1>Good evening, {firstName}<span className="wave">✳</span></h1>
+            <h1>{greeting}, {firstName}<span className="wave">✳</span></h1>
             <p className="welcome-subtitle">Here’s what’s happening with your AI assistant today.</p>
           </div>
           <button className="date-filter"><Icon name="clock" size={15} /> Last 30 days <span>⌄</span></button>
@@ -1431,26 +1591,26 @@ function Overview({ active, setActive }) {
         <section className="stats-grid" aria-label="Workspace statistics">
           <article className="stat-card">
             <div className="stat-top"><span>Total conversations</span><span className="stat-icon violet"><Icon name="bot" size={18} /></span></div>
-            <div className="stat-value">2,847</div>
-            <div className="stat-foot"><span className="trend">↗ 12.8%</span><span>vs. previous month</span></div>
-            <Spark id="conv" color="#3aa0ff" data={[30, 42, 36, 55, 48, 66, 58, 74, 68, 85, 80, 96]} />
+            <div className="stat-value">{stats ? stats.conversations.current.toLocaleString() : "…"}</div>
+<div className="stat-foot"><span className="trend">{fmtChange(convChange)}</span><span>vs. previous month</span></div>
+            <Spark id="conv" color="#3aa0ff" data={sparkOf(daily)} />
           </article>
           <article className="stat-card">
             <div className="stat-top"><span>Messages answered</span><span className="stat-icon mint"><Icon name="send" size={17} /></span></div>
-            <div className="stat-value">8,429</div>
-            <div className="stat-foot"><span className="trend">↗ 8.2%</span><span>vs. previous month</span></div>
-            <Spark id="msg" color="#2dd4bf" data={[40, 38, 52, 47, 60, 55, 70, 64, 78, 72, 88, 92]} />
+            <div className="stat-value">{stats ? stats.messages_answered.current.toLocaleString() : "…"}</div>
+<div className="stat-foot"><span className="trend">{fmtChange(msgChange)}</span><span>vs. previous month</span></div>
+            <Spark id="conv" color="#3aa0ff" data={sparkOf(daily)} />
           </article>
           <article className="stat-card">
             <div className="stat-top"><span>Knowledge sources</span><span className="stat-icon amber"><Icon name="book" size={17} /></span></div>
-            <div className="stat-value">08</div>
-            <div className="stat-foot"><span className="stat-neutral">+2 added</span><span>this month</span></div>
+            <div className="stat-value">{String(sourcesTotal).padStart(2, "0")}</div>
+<div className="stat-foot"><span className="stat-neutral">+{stats?.knowledge_sources?.added_this_month ?? 0} added</span><span>this month</span></div>
             <Spark id="kb" color="#fbbf24" data={[20, 20, 28, 28, 34, 34, 44, 44, 52, 60, 60, 72]} />
           </article>
           <article className="stat-card">
             <div className="stat-top"><span>Resolution rate</span><span className="stat-icon blue"><Icon name="spark" size={18} /></span></div>
-            <div className="stat-value">94.6<span className="stat-unit">%</span></div>
-            <div className="stat-foot"><span className="trend">↗ 3.1%</span><span>vs. previous month</span></div>
+            <div className="stat-foot"><span className="trend">{fmtChange(resChange)}</span><span>vs. previous month</span></div>
+<Spark id="res" color="#60a5fa" data={sparkOf((stats?.daily ?? []).map((d) => d.resolved))} />
             <Spark id="res" color="#60a5fa" data={[70, 74, 72, 80, 78, 84, 82, 88, 86, 92, 90, 95]} />
           </article>
         </section>
@@ -1466,7 +1626,7 @@ function Overview({ active, setActive }) {
               <button className="subtle-button" onClick={() => setActive("Chats")}><Icon name="arrow" size={14} /> View chats</button>
             </div>
             <div className="chart-body">
-              <AreaChart data={conversationsData} />
+              {areaData.length >= 2 ? <AreaChart data={areaData} /> : null}
             </div>
           </article>
 
@@ -1478,7 +1638,7 @@ function Overview({ active, setActive }) {
               </div>
             </div>
             <div className="chart-body">
-              <StackedBars data={resolvedData} />
+              {barData.length >= 2 ? <StackedBars data={barData} /> : null}
               <Legend items={[{ label: "Resolved", color: "#2dd4bf" }, { label: "Handoff", color: "#1e90ff" }]} />
             </div>
           </article>
@@ -1491,7 +1651,7 @@ function Overview({ active, setActive }) {
               <div><div className="panel-title">Resolution rate</div><p>Answered without human help</p></div>
             </div>
             <div className="chart-body" style={{ paddingBottom: 18 }}>
-              <Gauge value={94.6} />
+              <Gauge value={resRate} />
               <div style={{ display: "flex", justifyContent: "space-around", marginTop: 14, textAlign: "center" }}>
                 <div><strong style={{ display: "block", fontSize: 16 }}>2,847</strong><span style={{ fontSize: 11, color: AXIS_TEXT }}>chats</span></div>
                 <div><strong style={{ display: "block", fontSize: 16 }}>2,693</strong><span style={{ fontSize: 11, color: AXIS_TEXT }}>resolved</span></div>
@@ -1503,26 +1663,44 @@ function Overview({ active, setActive }) {
           <article className="panel activity-panel">
             <div className="panel-heading compact"><div><div className="panel-title">Recent activity</div><p>What’s happening in your workspace</p></div><button className="dots-button" aria-label="More options">•••</button></div>
             <div className="activity-list">
-              <div className="activity-item"><div className="activity-icon violet"><Icon name="file" size={16} /></div><div><strong>New source indexed</strong><p>Product documentation.pdf</p><small>12 minutes ago</small></div></div>
-              <div className="activity-item"><div className="activity-icon mint"><Icon name="bot" size={16} /></div><div><strong>Assistant resolved a query</strong><p>“How do I reset my password?”</p><small>38 minutes ago</small></div></div>
-              <div className="activity-item"><div className="activity-icon amber"><Icon name="book" size={16} /></div><div><strong>Knowledge base updated</strong><p>3 new pages synced</p><small>2 hours ago</small></div></div>
-            </div>
+  {(stats?.recent_conversations ?? []).map((c) => (
+    <div className="activity-item" key={c.id}>
+      <div className="activity-icon mint"><Icon name="bot" size={16} /></div>
+      <div>
+        <strong>New conversation</strong>
+        <p>“{c.title}”</p>
+        <small>{new Date(c.created_at).toLocaleString()}</small>
+      </div>
+    </div>
+  ))}
+  {(stats?.recent_sources ?? []).slice(0, 2).map((s) => (
+    <div className="activity-item" key={s.id}>
+      <div className="activity-icon violet"><Icon name="file" size={16} /></div>
+      <div>
+        <strong>Knowledge source added</strong>
+        <p>{s.title}</p>
+        <small>{new Date(s.created_at).toLocaleString()}</small>
+      </div>
+    </div>
+  ))}
+  {stats && !stats.recent_conversations?.length && !stats.recent_sources?.length && (
+    <div className="activity-item">
+      <div>
+        <strong>No activity yet</strong>
+        <p>Chats and new sources will appear here.</p>
+      </div>
+    </div>
+  )}
+</div>
           </article>
 
           <article className="panel sources-panel">
             <div className="panel-heading compact"><div><div className="panel-title">Your knowledge base</div><p>Content powering your assistant</p></div><button className="small-add" aria-label="Add knowledge source" onClick={() => setActive("Knowledge sources")}><Icon name="plus" size={17} /></button></div>
             <div className="chart-body" style={{ display: "flex", alignItems: "center", gap: 18, paddingBottom: 8 }}>
-              <Donut
-                total={8}
-                parts={[
-                  { label: "Documents", value: 5, color: "#1e90ff" },
-                  { label: "Web pages", value: 3, color: "#2dd4bf" },
-                ]}
-              />
+              <Donut total={sourcesTotal || 1} parts={[{ label: "Sources", value: sourcesTotal, color: "#1e90ff" }]} />
+              
               <div style={{ display: "grid", gap: 10, fontSize: 12, flex: 1 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}><i style={{ width: 8, height: 8, borderRadius: 2, background: "#1e90ff", display: "inline-block" }} /> Documents <strong style={{ marginLeft: "auto" }}>5</strong></div>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}><i style={{ width: 8, height: 8, borderRadius: 2, background: "#2dd4bf", display: "inline-block" }} /> Web pages <strong style={{ marginLeft: "auto" }}>3</strong></div>
-                <span className="source-ready"><i /> All synced</span>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}><i style={{ width: 8, height: 8, borderRadius: 2, background: "#1e90ff", display: "inline-block" }} /> Sources <strong style={{ marginLeft: "auto" }}>{sourcesTotal}</strong></div>
               </div>
             </div>
             <button className="manage-sources" style={{ marginTop: 10 }} onClick={() => setActive("Knowledge sources")}>Manage sources <Icon name="arrow" size={14} /></button>
