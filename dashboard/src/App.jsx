@@ -59,6 +59,27 @@ function formatDate(value) {
   }).format(new Date(value));
 }
 
+const CHATBOT_COLUMNS =
+  "id, organization_id, name, description, welcome_message, theme, status, created_at, updated_at, logo_url, collect_leads";
+const LOGO_BUCKET = "chatbot-logos";
+
+async function uploadChatbotLogo(chatbotId, file) {
+  const ext = file.type === "image/png" ? "png" : file.type === "image/webp" ? "webp" : "jpg";
+  const path = `${chatbotId}/logo-${Date.now()}.${ext}`;
+  const { error } = await supabase.storage
+    .from(LOGO_BUCKET)
+    .upload(path, file, { contentType: file.type, upsert: false, cacheControl: "3600" });
+  if (error) throw error;
+  const { data } = supabase.storage.from(LOGO_BUCKET).getPublicUrl(path);
+  return data.publicUrl;
+}
+
+function logoPathFromUrl(url) {
+  const marker = `/${LOGO_BUCKET}/`;
+  const i = url ? url.indexOf(marker) : -1;
+  return i === -1 ? null : decodeURIComponent(url.slice(i + marker.length).split("?")[0]);
+}
+
 function useWorkspaceMembership() {
   const { user } = useAuth();
   const userId = user?.id;
@@ -745,11 +766,14 @@ function AssistantAvatar({ assistant, size = 28 }) {
 /* ------------------------------------------------------------------ */
 /* Chatbot management                                                  */
 /* ------------------------------------------------------------------ */
+
+
 const EMPTY_CHATBOT_FORM = {
   name: "",
   description: "",
   welcome_message: "",
   theme: "ocean",
+  collect_leads: true,
 };
 
 function ChatbotManagement() {
@@ -771,8 +795,35 @@ function ChatbotManagement() {
   const [formError, setFormError] = useState("");
   const [saving, setSaving] = useState(false);
   const [busyId, setBusyId] = useState(null);
+  const [logoFile, setLogoFile] = useState(null);
+  const [logoPreview, setLogoPreview] = useState("");
+  const [removeLogo, setRemoveLogo] = useState(false);
 
   const canManage = role === "owner" || role === "admin";
+
+  function handleLogoPick(event) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) {
+      setFormError("Logo must be a PNG, JPG or WebP image.");
+      return;
+    }
+    if (file.size > 1024 * 1024) {
+      setFormError("Logo must be smaller than 1 MB.");
+      return;
+    }
+    setFormError("");
+    setLogoFile(file);
+    setRemoveLogo(false);
+    setLogoPreview(URL.createObjectURL(file));
+  }
+
+  function clearLogo() {
+    setLogoFile(null);
+    setLogoPreview("");
+    setRemoveLogo(true);
+  }
 
   useEffect(() => {
     if (!organization?.id) {
@@ -787,7 +838,7 @@ function ChatbotManagement() {
 
       const { data, error } = await supabase
         .from("chatbots")
-        .select("id, organization_id, name, description, welcome_message, theme, status, created_at, updated_at")
+        .select(CHATBOT_COLUMNS)
         .eq("organization_id", organization.id)
         .order("created_at", { ascending: false });
 
@@ -822,6 +873,9 @@ function ChatbotManagement() {
   function openCreateForm() {
     setEditing(null);
     setForm(EMPTY_CHATBOT_FORM);
+    setLogoFile(null);
+    setLogoPreview("");
+    setRemoveLogo(false);
     setFormError("");
     setSuccess("");
     setFormOpen(true);
@@ -834,7 +888,11 @@ function ChatbotManagement() {
       description: chatbot.description || "",
       welcome_message: chatbot.welcome_message || "",
       theme: chatbot.theme || "ocean",
+      collect_leads: chatbot.collect_leads ?? true,
     });
+    setLogoFile(null);
+    setLogoPreview(chatbot.logo_url || "");
+    setRemoveLogo(false);
     setFormError("");
     setSuccess("");
     setFormOpen(true);
@@ -885,6 +943,7 @@ function ChatbotManagement() {
       description: form.description.trim() || null,
       welcome_message: form.welcome_message.trim() || null,
       theme: form.theme,
+      collect_leads: form.collect_leads,
     };
 
     const result = editing
@@ -892,7 +951,7 @@ function ChatbotManagement() {
           .from("chatbots")
           .update(payload)
           .eq("id", editing.id)
-          .select("id, organization_id, name, description, welcome_message, theme, status, created_at, updated_at")
+          .select(CHATBOT_COLUMNS)
           .single()
       : await supabase
           .from("chatbots")
@@ -901,24 +960,45 @@ function ChatbotManagement() {
             organization_id: organization.id,
             status: "draft",
           })
-          .select("id, organization_id, name, description, welcome_message, theme, status, created_at, updated_at")
+          .select(CHATBOT_COLUMNS)
           .single();
 
-    setSaving(false);
-
     if (result.error) {
+      setSaving(false);
       setFormError(result.error.message);
       return;
     }
 
+    let savedBot = result.data;
+    let logoWarning = "";
+
+    if (logoFile || removeLogo) {
+      try {
+        const nextUrl = logoFile ? await uploadChatbotLogo(savedBot.id, logoFile) : null;
+        const { data: withLogo, error: logoError } = await supabase
+          .from("chatbots")
+          .update({ logo_url: nextUrl })
+          .eq("id", savedBot.id)
+          .select(CHATBOT_COLUMNS)
+          .single();
+        if (logoError) throw logoError;
+        const oldPath = logoPathFromUrl(savedBot.logo_url);
+        if (oldPath) await supabase.storage.from(LOGO_BUCKET).remove([oldPath]);
+        savedBot = withLogo;
+      } catch (logoErr) {
+        logoWarning = ` The logo could not be saved: ${logoErr.message}`;
+      }
+    }
+
+    setSaving(false);
     setChatbots((current) =>
       editing
-        ? current.map((chatbot) => (chatbot.id === result.data.id ? result.data : chatbot))
-        : [result.data, ...current]
+        ? current.map((chatbot) => (chatbot.id === savedBot.id ? savedBot : chatbot))
+        : [savedBot, ...current]
     );
     setFormOpen(false);
     setEditing(null);
-    setSuccess(editing ? "Chatbot updated." : "Chatbot created.");
+    setSuccess((editing ? "Chatbot updated." : "Chatbot created.") + logoWarning);
   }
 
   async function toggleStatus(chatbot) {
@@ -933,7 +1013,7 @@ function ChatbotManagement() {
       .from("chatbots")
       .update({ status: nextStatus })
       .eq("id", chatbot.id)
-      .select("id, organization_id, name, description, welcome_message, theme, status, created_at, updated_at")
+      .select(CHATBOT_COLUMNS)
       .single();
 
     setBusyId(null);
@@ -1068,7 +1148,17 @@ function ChatbotManagement() {
                 {filteredChatbots.map((chatbot) => (
                   <article className="panel chatbot-card" key={chatbot.id}>
                     <div className="chatbot-card-top">
-                      <span className="chatbot-avatar"><Icon name="bot" size={18} /></span>
+                      <span className="chatbot-avatar">
+                        {chatbot.logo_url ? (
+                          <img
+                            src={chatbot.logo_url}
+                            alt=""
+                            style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: "inherit" }}
+                          />
+                        ) : (
+                          <Icon name="bot" size={18} />
+                        )}
+                      </span>
                       <span className={`chatbot-status ${chatbot.status}`}>{chatbot.status}</span>
                     </div>
                     <h2>{chatbot.name}</h2>
@@ -1163,6 +1253,38 @@ function ChatbotManagement() {
               <option value="violet">Violet</option>
             </select>
 
+            <label className="field-label" htmlFor="chatbot-logo">Chatbot logo</label>
+            <div className="logo-picker">
+              <span className="logo-preview">
+                {logoPreview ? <img src={logoPreview} alt="" /> : <Icon name="bot" size={22} />}
+              </span>
+              <div>
+                <input
+                  id="chatbot-logo"
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  onChange={handleLogoPick}
+                />
+                {logoPreview && (
+                  <button type="button" className="subtle-button" onClick={clearLogo}>
+                    Remove logo
+                  </button>
+                )}
+                <small>PNG, JPG or WebP, up to 1 MB. Shown on the chat button and header.</small>
+              </div>
+            </div>
+
+            <label className="check-row">
+              <input
+                type="checkbox"
+                checked={form.collect_leads}
+                onChange={(event) =>
+                  setForm((current) => ({ ...current, collect_leads: event.target.checked }))
+                }
+              />
+              Ask visitors for name, email and phone before chatting (all optional)
+            </label>
+
             {formError && <p className="modal-error" role="alert">{formError}</p>}
 
             <div className="modal-actions">
@@ -1177,6 +1299,8 @@ function ChatbotManagement() {
     </>
   );
 }
+
+
 
 /* ------------------------------------------------------------------ */
 /* Chats page                                                          */
