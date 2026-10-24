@@ -109,6 +109,8 @@
       '.m{max-width:80%;padding:8px 12px;border-radius:12px;font-size:14px;line-height:1.4;white-space:pre-wrap;word-wrap:break-word}' +
       '.u{align-self:flex-end;background:' + color + ';color:#fff}' +
       '.a{align-self:flex-start;background:#e2e8f0;color:#0f172a}' +
+      '.agent{border-left:3px solid ' + color + '}' +
+      '.btn.alert::after{content:"";position:absolute;top:6px;right:6px;width:12px;height:12px;border-radius:50%;background:#ef4444;border:2px solid #fff}' +
       '.e{align-self:stretch;max-width:100%;background:#fee2e2;color:#991b1b;font-size:13px;display:flex;align-items:center;justify-content:space-between;gap:8px}' +
       '.e button{border:1px solid #991b1b;background:#fff;color:#991b1b;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:12px}' +
       '.dot{display:inline-block;width:6px;height:6px;margin:0 2px;border-radius:50%;background:#64748b;animation:b 1.2s infinite}' +
@@ -201,6 +203,64 @@
     add(welcome, "a");
 
     // -------------------------------------------------------------------------
+    // HISTORY + TEAM REPLIES
+    // -------------------------------------------------------------------------
+    // "seen" holds the ids of messages that were already handled, so nothing is
+    // shown twice. Messages typed in this widget are not rendered from the
+    // server list; only replies sent by the team from the dashboard are.
+    var seen = {};
+
+    async function fetchMessages() {
+      if (!state.conversationId) return null;
+      try {
+        var res = await fetch(API, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            publicKey: botKey,
+            action: "messages",
+            visitorId: state.visitorId,
+            conversationId: state.conversationId,
+          }),
+        });
+        if (res.status === 404) { state.conversationId = undefined; save(); return null; }
+        if (!res.ok) return null;
+        var data = await res.json();
+        return data.messages || [];
+      } catch (e) {
+        return null;
+      }
+    }
+
+    // On page load: show the earlier conversation of this visitor
+    async function restoreHistory() {
+      var list = await fetchMessages();
+      if (!list || !list.length) return;
+      list.forEach(function (m) {
+        seen[m.id] = true;
+        add(m.content, m.role === "user" ? "u" : m.agent ? "a agent" : "a");
+      });
+    }
+
+    // Every few seconds: look for new replies from the team
+    async function pollTeamReplies() {
+      if (busy || document.hidden || !state.conversationId) return;
+      var list = await fetchMessages();
+      if (!list) return;
+      list.forEach(function (m) {
+        if (seen[m.id]) return;
+        seen[m.id] = true;
+        if (m.agent) {
+          add(m.content, "a agent");
+          if (!box.classList.contains("open")) btn.classList.add("alert");
+        }
+      });
+    }
+
+    restoreHistory();
+    setInterval(pollTeamReplies, 4000);
+
+    // -------------------------------------------------------------------------
     // 5. VISITOR DETAILS (LEAD FORM)
     // -------------------------------------------------------------------------
     // Name and email are required, phone is optional.
@@ -266,6 +326,7 @@
 
     btn.onclick = function () {
       box.classList.toggle("open");
+      btn.classList.remove("alert");
       if (box.classList.contains("open")) {
         if (box.classList.contains("leadmode")) ln.focus(); else input.focus();
       }
@@ -284,6 +345,7 @@
       bot.innerHTML = '<span class="dot"></span><span class="dot"></span><span class="dot"></span>';
       var got = false;
       var finished = false;
+      var handoff = false;
 
       // Handles one SSE event ("data: {...}")
       function handle(part) {
@@ -297,6 +359,7 @@
           scrollDown();
         } else if (evt.type === "done") {
           state.conversationId = evt.conversationId; save();
+          if (evt.handoff) handoff = true;
           finished = true;
         } else if (evt.type === "error") {
           throw new Error(evt.message);
@@ -334,7 +397,8 @@
           buf = parts.pop();
           for (var i = 0; i < parts.length; i++) handle(parts[i]);
         }
-        if (buf.trim()) handle(buf); // last event may arrive without a trailing blank line
+        if (buf.trim()) handle(buf); 
+        if (handoff && !got) bot.remove(); 
         if (!finished) throw new Error("The connection was interrupted. Please try again.");
       } catch (e) {
         bot.remove(); // remove the partial answer (the server did not save it either)

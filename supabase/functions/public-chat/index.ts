@@ -1,28 +1,23 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 
-const VISITOR_DAILY_LIMIT = 20;   // ek visitor ke din ke messages
-const BOT_DAILY_LIMIT = 500;      // ek bot ke total din ke messages (budget bachane ke liye)
+const VISITOR_DAILY_LIMIT = 20;
+const BOT_DAILY_LIMIT = 500;
 const HISTORY_LIMIT = 20;
+const HUMAN_ACTIVE_MINUTES = 15; // team reply ke baad itni der AI chup rahega
 
 const MODEL = Deno.env.get("GEMINI_MODEL") ?? "gemini-3.6-flash";
 
-// Gemini ko jawab dene ke liye kul kitna time (retries ke saath)
 const GEMINI_TOTAL_TIMEOUT_MS = 25_000;
 
-// Ek reply me max kitne tokens
 const MAX_OUTPUT_TOKENS = 2048;
 
-// Apne status ke hisaab se badlo
 const PUBLISHED_STATUSES = ["published", "active"];
 
-// ---- Knowledge base (client ke PDF / website se jawab) ----
-// Embedding wahi settings jo search-knowledge / process-knowledge-source me hain
 const EMBEDDING_MODEL = "gemini-embedding-001";
 const EMBEDDING_DIMENSIONS = 1536;
 const EMBEDDING_TIMEOUT_MS = 6_000;
 const KNOWLEDGE_TOP_K = 4;
-// Is score se kam wale chunks ignore (sawal source se related nahi maana jayega).
-// Test karke badlo. Code badle bina bhi badal sakti ho: Supabase secret KNOWLEDGE_MIN_SIMILARITY
+
 const KNOWLEDGE_MIN_SIMILARITY = Number(Deno.env.get("KNOWLEDGE_MIN_SIMILARITY") ?? "0.5");
 const MIN_QUERY_CHARS = 3;
 const CHUNK_MAX_CHARS = 1500;
@@ -51,8 +46,6 @@ function timeoutError() {
   return e;
 }
 
-// Gemini ko streaming mode me call karta hai.
-// 500/503 par max 2 retry (backoff ke saath), total time GEMINI_TOTAL_TIMEOUT_MS tak.
 async function callGemini(contents: unknown[], systemPrompt: string | null): Promise<Response> {
   const apiKey = Deno.env.get("GEMINI_API_KEY");
   if (!apiKey) throw new Error("MISSING_API_KEY");
@@ -86,7 +79,6 @@ async function callGemini(contents: unknown[], systemPrompt: string | null): Pro
       clearTimeout(timer);
     }
 
-    // Sirf server-side temporary errors par retry
     if (res.status !== 500 && res.status !== 503) return res;
     const wait = 1000 * (attempt + 1);
     if (attempt === 2 || deadline - Date.now() <= wait + 1500) return res;
@@ -132,17 +124,14 @@ async function embedQuery(text: string): Promise<number[]> {
   return normalizeVector(values);
 }
 
-// Bot ke apne knowledge chunks me se sawal se milte chunks. Kabhi throw nahi karta:
-// fail hone par [] deta hai, taaki chat band na ho.
 async function retrieveKnowledge(botId: string, botName: string, question: string): Promise<string[]> {
   if (question.trim().length < MIN_QUERY_CHARS) return [];
   const started = Date.now();
   try {
-    // Bot ka naam saath me embed karte hain, taaki galat spelling wale sawal bhi sahi source tak pahunchein
     const embedding = await embedQuery(`${botName}: ${question}`);
     const { data, error } = await admin.rpc("match_knowledge_chunks", {
       query_embedding: `[${embedding.join(",")}]`,
-      match_chatbot_id: botId, // sirf is bot ke chunks
+      match_chatbot_id: botId,
       match_count: KNOWLEDGE_TOP_K,
     });
     if (error) {
@@ -221,7 +210,6 @@ Deno.serve(async (req) => {
       return fail(403, "ORIGIN_NOT_ALLOWED", "This website is not allowed to use this chatbot");
     }
 
-    // 3. Config (widget load hote hi)
     if (body?.action === "config") {
       return json(200, {
         name: bot.name,
@@ -232,7 +220,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    // 3b. Visitor details (name + email zaroori, phone optional)
+    // 3b. Visitor Details (Name + Email required, phone optional)
     if (body?.action === "lead") {
       const vid = typeof body?.visitorId === "string" ? body.visitorId : "";
       if (!UUID.test(vid)) return fail(400, "VALIDATION_ERROR", "Invalid visitorId");
@@ -263,6 +251,39 @@ Deno.serve(async (req) => {
       return json(200, { ok: true });
     }
 
+    // 3c. Messages of one conversation (history + replies written by the team)
+    if (body?.action === "messages") {
+      const vid = typeof body?.visitorId === "string" ? body.visitorId : "";
+      const cid = typeof body?.conversationId === "string" ? body.conversationId : "";
+      if (!UUID.test(vid) || !UUID.test(cid)) return fail(400, "VALIDATION_ERROR", "Invalid ids");
+
+      // The conversation must belong to this bot and this visitor
+      const { data: convo } = await admin.from("conversations").select("id")
+        .eq("id", cid).eq("chatbot_id", bot.id).eq("visitor_id", vid).maybeSingle();
+      if (!convo) return fail(404, "NOT_FOUND", "Conversation not found");
+
+      // dashboard_only messages (private team chat with the AI) are never sent to the visitor
+      const { data: rows, error: listErr } = await admin.from("messages")
+        .select("id, role, content, created_at, sent_by_agent")
+        .eq("conversation_id", cid)
+        .eq("dashboard_only", false)
+        .order("created_at", { ascending: true })
+        .limit(200);
+      if (listErr) {
+        console.error("Messages load failed:", listErr.message);
+        return fail(500, "MESSAGES_FAILED", "Could not load messages.");
+      }
+      return json(200, {
+        messages: (rows ?? []).map((r) => ({
+          id: r.id,
+          role: r.role,
+          content: r.content,
+          created_at: r.created_at,
+          agent: r.sent_by_agent === true,
+        })),
+      });
+    }
+
     // 4. Validate
     const visitorId = typeof body?.visitorId === "string" ? body.visitorId : "";
     const conversationId = typeof body?.conversationId === "string" ? body.conversationId : null;
@@ -270,7 +291,7 @@ Deno.serve(async (req) => {
     if (!UUID.test(visitorId)) return fail(400, "VALIDATION_ERROR", "Invalid visitorId");
     if (!message || message.length > 2000) return fail(400, "VALIDATION_ERROR", "Message must be 1 to 2000 characters");
 
-    // 5. Limits (dono queries ek saath)
+    // 5. Limits
     const day = new Date().toISOString().slice(0, 10);
     const [{ data: mine }, { data: all }] = await Promise.all([
       admin.from("visitor_usage_daily").select("requests")
@@ -284,7 +305,7 @@ Deno.serve(async (req) => {
     if (botTotal >= BOT_DAILY_LIMIT)
       return fail(429, "BOT_BUSY", "This assistant is unavailable right now. Please try later.");
 
-    // Knowledge search abhi shuru, history ke saath parallel chalega (kabhi throw nahi karta)
+    // Knowledge search has just begun; it will run in parallel with history (it never throws an error)
     const knowledgePromise = retrieveKnowledge(bot.id, String(bot.name ?? ""), message);
     const businessNamePromise = (async () => {
       try {
@@ -304,8 +325,35 @@ Deno.serve(async (req) => {
         .eq("id", conversationId).eq("chatbot_id", bot.id).eq("visitor_id", visitorId).maybeSingle();
       if (!convo) return fail(404, "NOT_FOUND", "Conversation not found");
       convoId = convo.id;
+
+      // Agar team ne abhi reply kiya hai, to AI jawab na de. Sirf visitor ka message save karo.
+      const since = new Date(Date.now() - HUMAN_ACTIVE_MINUTES * 60 * 1000).toISOString();
+      const { data: agentMsg } = await admin.from("messages").select("id")
+        .eq("conversation_id", convoId)
+        .eq("sent_by_agent", true)
+        .eq("dashboard_only", false)
+        .gte("created_at", since)
+        .limit(1);
+
+      if (agentMsg && agentMsg.length > 0) {
+        const { error: hErr } = await admin.from("messages").insert({
+          conversation_id: convoId, role: "user", content: message,
+        });
+        if (hErr) {
+          console.error("Handoff save failed:", hErr.message);
+          return fail(500, "SAVE_FAILED", "Could not send your message. Please try again.");
+        }
+        await admin.from("conversations").update({ updated_at: new Date().toISOString() }).eq("id", convoId);
+        const doneEvent = `data: ${JSON.stringify({ type: "done", conversationId: convoId, handoff: true })}\n\n`;
+        return new Response(new TextEncoder().encode(doneEvent), {
+          status: 200,
+          headers: { ...h, "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
+        });
+      }
+
       const { data: recent } = await admin.from("messages").select("role,content")
-        .eq("conversation_id", convoId).order("created_at", { ascending: false }).limit(HISTORY_LIMIT);
+        .eq("conversation_id", convoId).eq("dashboard_only", false)
+        .order("created_at", { ascending: false }).limit(HISTORY_LIMIT);
       history = (recent ?? []).reverse();
     }
 

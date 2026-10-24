@@ -5,6 +5,7 @@ import ChatWidget from "./ChatWidget";
 import { useAuth } from "./AuthContext";
 import { supabase } from "./lib/supabaseClient";
 import KnowledgeSources from "./KnowledgeSources";
+import Leads from "./Leads";
 import { useChats } from "./useChats";
 import { useOverviewStats, pctChange } from "./useOverviewStats";
 
@@ -448,6 +449,7 @@ function Sidebar({ active, setActive, open, close }) {
     { id: "Embed center", icon: "code" },
     { id: "Assistant settings", icon: "sliders" },
     { id: "Chats", icon: "chat" },
+    { id: "Leads", icon: "chat" },
   ];
 
   return (
@@ -1821,6 +1823,10 @@ function KnowledgeSourcesPage() {
     />
   );
 }
+function LeadsPage() {
+  const { organization, role } = useWorkspaceMembership();
+  return <Leads topbar={<Topbar title="Leads" />} organization={organization} role={role} />;
+}
 
 export default function App() {
   const { organization } = useWorkspaceMembership();
@@ -1830,22 +1836,14 @@ export default function App() {
   const [assistant, setAssistant] = useState(loadAssistant);
  // const [chats, setChats] = useState(loadChats);
 
-  // Widget se aayi chat ko save/update karo
-  const saveChat = (chat) => {
-    setChats((prev) => {
-      const exists = prev.some((c) => c.id === chat.id);
-      const next = exists ? prev.map((c) => (c.id === chat.id ? chat : c)) : [chat, ...prev];
-      persistChats(next);
-      return next;
-    });
-  };
-
-  const deleteChat = (id) => {
-    setChats((prev) => {
-      const next = prev.filter((c) => c.id !== id);
-      persistChats(next);
-      return next;
-    });
+  // Delete a conversation from Supabase, then reload the chat list
+  const deleteChat = async (id) => {
+    const { error } = await supabase.from("conversations").delete().eq("id", id);
+    if (error) {
+      window.alert(error.message);
+      return;
+    }
+    reloadChats();
   };
 
   const saveAssistant = (data) => {
@@ -1865,11 +1863,13 @@ export default function App() {
 
         {active === "Chatbots" && <ChatbotManagement />}
         {active === "Chats" && <ChatHistory assistant={assistant} chats={chats} onDelete={deleteChat} />}
+        {active === "Leads" && <LeadsPage />}
         {active === "Assistant settings" && <AssistantSettings assistant={assistant} onSave={saveAssistant} />}
         {active === "Knowledge sources" && <KnowledgeSourcesPage />}
-        {active !== "Chatbots" && active !== "Knowledge sources" && active !== "Chats" && active !== "Assistant settings" && <Overview active={active} setActive={setActive} />}
+        {active !== "Chatbots" && active !== "Knowledge sources" && active !== "Chats" && active !== "Leads" && active !== "Assistant settings" && <Overview active={active} setActive={setActive} />}
+      
       </div>
-         <ChatWidget organizationId={organization?.id} assistant={assistant} onMessageSaved={reloadChats} />
+        <ChatWidget organizationId={organization?.id} assistant={assistant} onMessageSaved={reloadChats} />
     </div>
   );
 }
