@@ -1,11 +1,30 @@
 (function () {
+  // ---------------------------------------------------------------------------
+  // 1. FIND OUR OWN <script> TAG
+  // ---------------------------------------------------------------------------
+  // document.currentScript is NULL when the script is loaded with "defer",
+  // injected dynamically, or re-loaded by platforms like Shopify.
+  // So we use it first, and fall back to searching the DOM for the tag
+  // that has a data-bot-key attribute.
   var script = document.currentScript;
+  if (!script || !script.getAttribute("data-bot-key")) {
+    var candidates = document.querySelectorAll('script[src*="embed.js"][data-bot-key]');
+    script = candidates[candidates.length - 1];
+  }
+  if (!script) {
+    console.error("Chatbot: embed script tag with data-bot-key was not found");
+    return;
+  }
+
   var botKey = script.getAttribute("data-bot-key");
   var API = script.getAttribute("data-api");
   var titleAttr = script.getAttribute("data-title");
   var colorAttr = script.getAttribute("data-color");
   if (colorAttr && !/^#[0-9a-f]{3,8}$/i.test(colorAttr)) colorAttr = null;
-  if (!botKey || !API) { console.error("Chatbot: data-bot-key and data-api are required"); return; }
+  if (!botKey || !API) {
+    console.error("Chatbot: data-bot-key and data-api are required");
+    return;
+  }
 
   var THEMES = { ocean: "#1e90ff", slate: "#475569", mint: "#14b8a6", violet: "#7c3aed" };
 
@@ -14,6 +33,11 @@
     return "v-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 12);
   }
 
+  // ---------------------------------------------------------------------------
+  // 2. LOCAL STATE (visitor id, conversation id, lead status)
+  // ---------------------------------------------------------------------------
+  // localStorage can be blocked (sandboxed iframes, privacy modes), so every
+  // access is wrapped in try/catch and the widget still works in memory.
   var STORE = "chatbot_" + botKey;
   var state = {};
   try { state = JSON.parse(localStorage.getItem(STORE) || "{}"); } catch (e) {}
@@ -21,7 +45,11 @@
   function save() { try { localStorage.setItem(STORE, JSON.stringify(state)); } catch (e) {} }
   save();
 
-  // LOADING: pehle config. Published nahi / domain allowed nahi => widget dikhao hi mat
+  // ---------------------------------------------------------------------------
+  // 3. LOAD CONFIG FIRST
+  // ---------------------------------------------------------------------------
+  // If the bot is not published or this website is not allowed, the server
+  // answers 403/404 and we do not show the widget at all.
   async function loadConfig() {
     try {
       var res = await fetch(API, {
@@ -38,11 +66,23 @@
     return {};
   }
 
+  // Wait until document.body exists before mounting the widget
+  function whenBodyReady(fn) {
+    if (document.body) { fn(); return; }
+    document.addEventListener("DOMContentLoaded", fn);
+  }
+
   loadConfig().then(function (cfg) {
-    if (cfg === null) { console.warn("Chatbot: not published, or this website is not allowed."); return; }
-    mount(cfg);
+    if (cfg === null) {
+      console.warn("Chatbot: not published, or this website is not allowed.");
+      return;
+    }
+    whenBodyReady(function () { mount(cfg); });
   });
 
+  // ---------------------------------------------------------------------------
+  // 4. BUILD THE WIDGET
+  // ---------------------------------------------------------------------------
   function mount(cfg) {
     var title = titleAttr || cfg.name || "Chat with us";
     var color = colorAttr || THEMES[cfg.theme] || (/^#[0-9a-f]{6}$/i.test(cfg.theme || "") ? cfg.theme : "#1e90ff");
@@ -50,6 +90,7 @@
     var logoUrl = typeof cfg.logoUrl === "string" && /^https:\/\//i.test(cfg.logoUrl) ? cfg.logoUrl : "";
     var askLead = cfg.collectLeads === true && !state.leadDone;
 
+    // Shadow DOM keeps the host website's CSS from affecting the widget (and vice versa)
     var host = document.createElement("div");
     host.style.setProperty("all", "initial", "important");
     document.body.appendChild(host);
@@ -117,7 +158,8 @@
     var lerr = root.querySelector(".err");
     var goBtn = root.querySelector(".go");
 
-    // Logo: chat button + header (image load fail ho to purana icon / sirf title)
+    // Logo on the chat button and in the header.
+    // If the image fails to load, we keep the default icon / title only.
     if (logoUrl) {
       var bi = new Image();
       bi.alt = "";
@@ -130,14 +172,14 @@
       hi.src = logoUrl;
     }
     var ttl = document.createElement("span");
-    ttl.textContent = title; // textContent: XSS se safe
+    ttl.textContent = title; // textContent is XSS-safe
     head.appendChild(ttl);
 
     function scrollDown() { msgs.scrollTop = msgs.scrollHeight; }
     function add(text, cls) {
       var d = document.createElement("div");
       d.className = "m " + cls;
-      d.textContent = text; // textContent: XSS se safe
+      d.textContent = text; // textContent is XSS-safe
       msgs.appendChild(d);
       scrollDown();
       return d;
@@ -158,7 +200,11 @@
 
     add(welcome, "a");
 
-    // VISITOR DETAILS: name + email zaroori, phone optional. Chat shuru hone se pehle ek baar.
+    // -------------------------------------------------------------------------
+    // 5. VISITOR DETAILS (LEAD FORM)
+    // -------------------------------------------------------------------------
+    // Name and email are required, phone is optional.
+    // Shown once, before the chat starts.
     if (askLead) box.classList.add("leadmode");
 
     function finishLead() {
@@ -225,6 +271,9 @@
       }
     };
 
+    // -------------------------------------------------------------------------
+    // 6. SENDING MESSAGES (STREAMING RESPONSE)
+    // -------------------------------------------------------------------------
     var busy = false;
     async function send(text, isRetry) {
       if (!text || busy) return;
@@ -236,6 +285,7 @@
       var got = false;
       var finished = false;
 
+      // Handles one SSE event ("data: {...}")
       function handle(part) {
         var line = part.trim();
         if (line.indexOf("data:") !== 0) return;
@@ -267,11 +317,12 @@
 
         if (!res.ok) {
           var data = await res.json().catch(function () { return null; });
+          // Conversation no longer exists on the server: start a fresh one next time
           if (res.status === 404 && state.conversationId) { state.conversationId = undefined; save(); }
           throw new Error((data && data.error && data.error.message) || "Something went wrong.");
         }
 
-        // STREAMING: SSE events
+        // Read the SSE stream chunk by chunk
         var reader = res.body.getReader();
         var dec = new TextDecoder();
         var buf = "";
@@ -283,10 +334,10 @@
           buf = parts.pop();
           for (var i = 0; i < parts.length; i++) handle(parts[i]);
         }
-        if (buf.trim()) handle(buf); // aakhri event agar blank line ke bina aaya ho
+        if (buf.trim()) handle(buf); // last event may arrive without a trailing blank line
         if (!finished) throw new Error("The connection was interrupted. Please try again.");
       } catch (e) {
-        bot.remove(); // adhoora jawab hata do (server ne save bhi nahi kiya)
+        bot.remove(); // remove the partial answer (the server did not save it either)
         var msg = e instanceof TypeError ? "Network error. Check your connection and try again." : e.message;
         showError(msg, text);
       }
