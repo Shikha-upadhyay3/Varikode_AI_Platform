@@ -3,7 +3,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 const VISITOR_DAILY_LIMIT = 20;
 const BOT_DAILY_LIMIT = 500;
 const HISTORY_LIMIT = 20;
-const HUMAN_ACTIVE_MINUTES = 15; // team reply ke baad itni der AI chup rahega
+const HUMAN_ACTIVE_MINUTES = 15;
 
 const MODEL = Deno.env.get("GEMINI_MODEL") ?? "gemini-3.6-flash";
 
