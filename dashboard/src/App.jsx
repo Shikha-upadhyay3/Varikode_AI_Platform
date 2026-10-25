@@ -237,7 +237,7 @@ function AreaChart({ data }) {
   const [hover, setHover] = useState(data.length - 3);
   const W = 600, H = 230, L = 38, R = 14, T = 16, B = 28;
   const max = Math.max(...data.map((d) => d.value));
-  const top = Math.ceil(max / 40) * 40;
+  const top = Math.max(40, Math.ceil(max / 40) * 40);
   const step = (W - L - R) / (data.length - 1);
   const x = (i) => L + i * step;
   const y = (v) => T + (H - T - B) * (1 - v / top);
@@ -303,7 +303,7 @@ function AreaChart({ data }) {
 // Stacked bar chart: resolved (teal) + handoff (blue)
 function StackedBars({ data }) {
   const W = 400, H = 230, L = 32, R = 8, T = 14, B = 28;
-  const top = Math.ceil(Math.max(...data.map((d) => d.a + d.b)) / 40) * 40;
+  const top = Math.max(40, Math.ceil(Math.max(...data.map((d) => d.a + d.b)) / 40) * 40);
   const slot = (W - L - R) / data.length;
   const bw = slot * 0.6;
   const y = (v) => T + (H - T - B) * (1 - v / top);
@@ -441,6 +441,11 @@ function Sidebar({ active, setActive, open, close }) {
   }
 
   const roleLabel = role ? role.charAt(0).toUpperCase() + role.slice(1) : "";
+    const { stats: sidebarStats } = useOverviewStats(organization?.id, 30);
+  const USAGE_LIMIT = 10000;
+  const usedMessages = sidebarStats?.month_messages ?? 0;
+  const usagePct = Math.min(100, Math.round((usedMessages / USAGE_LIMIT) * 100));
+  const sourcesCount = sidebarStats?.knowledge_sources?.total ?? 0;
 
   const links = [
     { id: "Overview", icon: "grid" },
@@ -508,16 +513,16 @@ function Sidebar({ active, setActive, open, close }) {
             >
               <Icon name={link.icon} />
               <span>{link.id}</span>
-              {link.id === "Knowledge sources" && <span className="nav-count">8</span>}
+              {link.id === "Knowledge sources" && <span className="nav-count">{sourcesCount}</span>}
             </button>
           ))}
         </nav>
 
         <div className="sidebar-bottom">
           <div className="plan-card">
-            <div className="plan-heading"><span>Monthly usage</span><span>68%</span></div>
-            <div className="usage-track"><span /></div>
-            <p>6,820 <span>of 10,000 messages</span></p>
+            <div className="plan-heading"><span>Monthly usage</span><span>{usagePct}%</span></div>
+            <div className="usage-track"><span style={{ width: `${usagePct}%` }} /></div>
+            <p>{usedMessages.toLocaleString()} <span>of {USAGE_LIMIT.toLocaleString()} messages</span></p>
             <button onClick={() => setActive("Assistant settings")}>Upgrade plan <Icon name="arrow" size={14} /></button>
           </div>
           <div className="profile">
@@ -1607,13 +1612,13 @@ function Overview({ active, setActive }) {
             <div className="stat-top"><span>Knowledge sources</span><span className="stat-icon amber"><Icon name="book" size={17} /></span></div>
             <div className="stat-value">{String(sourcesTotal).padStart(2, "0")}</div>
 <div className="stat-foot"><span className="stat-neutral">+{stats?.knowledge_sources?.added_this_month ?? 0} added</span><span>this month</span></div>
-            <Spark id="kb" color="#fbbf24" data={[20, 20, 28, 28, 34, 34, 44, 44, 52, 60, 60, 72]} />
+
           </article>
           <article className="stat-card">
             <div className="stat-top"><span>Resolution rate</span><span className="stat-icon blue"><Icon name="spark" size={18} /></span></div>
             <div className="stat-foot"><span className="trend">{fmtChange(resChange)}</span><span>vs. previous month</span></div>
 <Spark id="res" color="#60a5fa" data={sparkOf((stats?.daily ?? []).map((d) => d.resolved))} />
-            <Spark id="res" color="#60a5fa" data={[70, 74, 72, 80, 78, 84, 82, 88, 86, 92, 90, 95]} />
+
           </article>
         </section>
 
@@ -1655,9 +1660,9 @@ function Overview({ active, setActive }) {
             <div className="chart-body" style={{ paddingBottom: 18 }}>
               <Gauge value={resRate} />
               <div style={{ display: "flex", justifyContent: "space-around", marginTop: 14, textAlign: "center" }}>
-                <div><strong style={{ display: "block", fontSize: 16 }}>2,847</strong><span style={{ fontSize: 11, color: AXIS_TEXT }}>chats</span></div>
-                <div><strong style={{ display: "block", fontSize: 16 }}>2,693</strong><span style={{ fontSize: 11, color: AXIS_TEXT }}>resolved</span></div>
-                <div><strong style={{ display: "block", fontSize: 16 }}>154</strong><span style={{ fontSize: 11, color: AXIS_TEXT }}>handoff</span></div>
+                <div><strong style={{ display: "block", fontSize: 16 }}>{outcomeTotal.toLocaleString()}</strong><span style={{ fontSize: 11, color: AXIS_TEXT }}>chats</span></div>
+                <div><strong style={{ display: "block", fontSize: 16 }}>{resolvedN.toLocaleString()}</strong><span style={{ fontSize: 11, color: AXIS_TEXT }}>resolved</span></div>
+                <div><strong style={{ display: "block", fontSize: 16 }}>{handoffN.toLocaleString()}</strong><span style={{ fontSize: 11, color: AXIS_TEXT }}>handoff</span></div>
               </div>
             </div>
           </article>
@@ -1807,7 +1812,7 @@ function persistChats(list) {
   try {
     localStorage.setItem("chats", JSON.stringify(list));
   } catch {
-    // storage full ya blocked
+    // storage full or blocked
   }
 }
 function KnowledgeSourcesPage() {
@@ -1821,6 +1826,78 @@ function KnowledgeSourcesPage() {
       orgError={error}
       loadingOrg={loading}
     />
+  );
+}
+/* ------------------------------------------------------------------ */
+/* Mobile navigation: horizontal menu bar shown only on phones         */
+/* ------------------------------------------------------------------ */
+const MOBILE_LINKS = [
+  { id: "Overview", icon: "grid" },
+  { id: "Chatbots", icon: "bot" },
+  { id: "Knowledge sources", icon: "book" },
+  { id: "Embed center", icon: "code" },
+  { id: "Assistant settings", icon: "sliders" },
+  { id: "Chats", icon: "chat" },
+  { id: "Leads", icon: "chat" },
+];
+
+const mobileTabsCss = `
+.mobile-tabs { display: none; }
+@media (max-width: 900px) {
+  .mobile-tabs {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding: 10px 12px;
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    background: #0b1220;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .mobile-tabs::-webkit-scrollbar { display: none; }
+  .mobile-tabs button {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 14px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    background: rgba(255, 255, 255, 0.05);
+    color: #cbd5e1;
+    font-size: 13px;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  .mobile-tabs button.active {
+    background: #1e90ff;
+    border-color: #1e90ff;
+    color: #fff;
+  }
+}
+`;
+
+function MobileTabs({ active, setActive }) {
+  return (
+    <>
+      <style>{mobileTabsCss}</style>
+      <nav className="mobile-tabs" aria-label="Mobile navigation">
+        {MOBILE_LINKS.map((link) => (
+          <button
+            key={link.id}
+            type="button"
+            className={active === link.id ? "active" : ""}
+            onClick={() => setActive(link.id)}
+          >
+            <Icon name={link.icon} size={15} />
+            {link.id}
+          </button>
+        ))}
+      </nav>
+    </>
   );
 }
 function LeadsPage() {
@@ -1851,7 +1928,7 @@ export default function App() {
     try {
       localStorage.setItem("assistant", JSON.stringify(data));
     } catch {
-      // storage full ya blocked: state me phir bhi update ho jayega
+   // Storage full or blocked: The state will still be updated
     }
   };
 
@@ -1860,6 +1937,7 @@ export default function App() {
       <Sidebar active={active} setActive={setActive} open={menuOpen} close={() => setMenuOpen(false)} />
       <div className="main-shell">
         <button className="mobile-menu" onClick={() => setMenuOpen(true)} aria-label="Open menu"><Icon name="menu" /></button>
+                <MobileTabs active={active} setActive={setActive} />
 
         {active === "Chatbots" && <ChatbotManagement />}
         {active === "Chats" && <ChatHistory assistant={assistant} chats={chats} onDelete={deleteChat} />}
