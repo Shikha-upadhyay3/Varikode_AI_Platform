@@ -46,3 +46,45 @@ input:focus-visible {
   background: #6e57d7;
   color: white;
 }
+/* ===== UserMenu (sidebar user box + popup) ===== */
+.um-wrap { position: relative; width: 100%; }
+
+.um-trigger {
+  width: 100%; display: flex; align-items: center; gap: 12px;
+  padding: 10px 12px; border: 0; border-radius: 12px; cursor: pointer;
+  background: transparent; color: #e6edf7; font-family: inherit; text-align: left;
+  transition: background .15s;
+}
+.um-trigger:hover { background: rgba(255, 255, 255, .06); }
+
+.um-avatar {
+  flex: none; width: 38px; height: 38px; border-radius: 50%;
+  display: grid; place-items: center; font-weight: 700; color: #fff;
+  background: linear-gradient(135deg, #1e9bf0, #22c3c3);
+}
+.um-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.um-text b { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.um-text small { font-size: 12px; color: #8a9ab3; }
+.um-dots { color: #8a9ab3; letter-spacing: 1px; font-size: 14px; }
+
+.um-menu {
+  position: absolute; left: 0; right: 0; bottom: calc(100% + 8px); z-index: 50;
+  padding: 8px; border-radius: 14px;
+  background: #101826; border: 1px solid rgba(255, 255, 255, .1);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, .5);
+  animation: um-pop .14s ease-out;
+}
+@keyframes um-pop { from { opacity: 0; transform: translateY(6px); } }
+
+.um-head { padding: 8px 10px 10px; border-bottom: 1px solid rgba(255, 255, 255, .08); margin-bottom: 6px; }
+.um-head-name { font-size: 14px; font-weight: 600; color: #fff; }
+.um-head-email { font-size: 12px; color: #8a9ab3; margin-top: 2px; word-break: break-all; }
+
+.um-item {
+  width: 100%; display: flex; align-items: center; gap: 10px;
+  padding: 10px; border: 0; border-radius: 8px; cursor: pointer;
+  background: transparent; color: #e6edf7; font-size: 14px; font-family: inherit; text-align: left;
+}
+.um-item:hover { background: rgba(255, 255, 255, .07); }
+.um-logout { color: #ff8a8c; }
+.um-logout:hover { background: rgba(255, 77, 79, .12); }
