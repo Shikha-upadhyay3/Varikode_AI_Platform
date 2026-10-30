@@ -1,15 +1,644 @@
-.auth-wrap { min-height: 100vh; display: grid; place-items: center; background: #0a0d14; padding: 20px; }
-.auth-card { width: 100%; max-width: 380px; display: flex; flex-direction: column; gap: 12px;
-  background: #11151f; border: 1px solid #1f2633; border-radius: 16px; padding: 28px; color: #e8ecf4; }
-.auth-card h1 { margin: 0; font-size: 26px; }
-.auth-card h1 span { color: #2dd4bf; }
-.auth-card p { margin: 0 0 6px; color: #8b95a8; font-size: 14px; }
-.auth-card input { padding: 12px 14px; border-radius: 10px; border: 1px solid #263043;
-  background: #0a0d14; color: #e8ecf4; font-size: 14px; outline: none; }
-.auth-card input:focus { border-color: #1d9bf0; }
-.auth-card button[type="submit"] { padding: 12px; border: 0; border-radius: 10px; cursor: pointer;
-  background: linear-gradient(90deg, #1d9bf0, #22c1c3); color: #fff; font-weight: 600; font-size: 15px; }
-.auth-card button:disabled { opacity: .6; cursor: not-allowed; }
-.auth-link { background: none; border: 0; color: #2dd4bf; cursor: pointer; font-size: 13px; }
-.auth-error { background: rgba(239,68,68,.12); color: #f87171; padding: 10px; border-radius: 8px; font-size: 13px; }
-.auth-info { background: rgba(45,212,191,.12); color: #2dd4bf; padding: 10px; border-radius: 8px; font-size: 13px; }
+/* =====================================================
+   FONTS
+   Inter  -> main UI font
+   Caveat -> handwritten "Your Growth Our Code" tagline
+   ===================================================== */
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Caveat:wght@500;600&display=swap");
+
+/* =====================================================
+   DESIGN TOKENS
+   Change colours here and they update everywhere.
+   ===================================================== */
+:root {
+  --bg: #050a18;                     /* page background */
+  --line: rgba(120, 170, 255, 0.16); /* borders and dividers */
+  --text: #f1f5ff;                   /* main text colour */
+  --muted: #9aa8c7;                  /* secondary text colour */
+  --cyan: #14d8e6;                   /* main accent colour */
+  --blue: #1677ff;                   /* secondary accent colour */
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* =====================================================
+   PAGE SHELL
+   Two-column grid: left = brand content, right = form.
+   The background is layered radial glows over a dark gradient.
+   ===================================================== */
+.auth-shell {
+  position: relative;
+  overflow: hidden;
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: 1.3fr 1fr; /* left side is wider */
+  gap: clamp(24px, 4vw, 64px);
+  align-items: center;
+  padding: clamp(24px, 3vw, 48px) clamp(24px, 4vw, 64px);
+  color: var(--text);
+  font-family: "Inter", system-ui, sans-serif;
+  background:
+    radial-gradient(700px 500px at 0% 100%, rgba(20, 216, 230, 0.22), transparent 60%),  /* cyan glow, bottom-left */
+    radial-gradient(800px 600px at 80% 20%, rgba(22, 119, 255, 0.12), transparent 60%),  /* blue glow, top-right */
+    linear-gradient(160deg, #07122a 0%, #050a18 55%, #04101f 100%);
+}
+
+/* =====================================================
+   BACKGROUND DECORATIONS
+   ===================================================== */
+
+/* Dotted pattern in the top-right corner */
+.bg-dots {
+  position: absolute;
+  top: 28px;
+  right: 36px;
+  width: 100px;
+  height: 60px;
+  background-image: radial-gradient(var(--cyan) 1.5px, transparent 1.6px);
+  background-size: 20px 20px;
+  opacity: 0.7;
+}
+
+/* Glowing wave lines in the bottom-left corner */
+.bg-wave {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 70%;
+  height: 280px;
+  pointer-events: none; /* never blocks clicks */
+  opacity: 0.75;
+}
+.bg-wave path {
+  fill: none;
+  stroke: var(--cyan);
+  stroke-width: 1.4;
+  opacity: 0.5;
+}
+.bg-wave path:nth-child(2) { opacity: 0.3; }
+.bg-wave path:nth-child(3) { opacity: 0.18; }
+
+/* =====================================================
+   LOGO
+   Used in both the hero (left) and the form card (right).
+   ===================================================== */
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.logo-text {
+  font-weight: 700;
+  letter-spacing: -1.5px;
+  line-height: 1;
+}
+.logo-text span {
+  color: var(--cyan); /* the ".ai" part */
+}
+
+/* "TECHNOLOGY | AI | GROWTH" line under the hero logo */
+.logo-sub {
+  margin: 6px 0 0 4px;
+  padding-left: 62px; /* aligns the text under "varikode" */
+  font-size: 12px;
+  letter-spacing: 2.5px;
+  color: var(--muted);
+}
+.logo-sub b {
+  margin: 0 6px;
+  font-weight: 400;
+  opacity: 0.6;
+}
+
+/* =====================================================
+   LEFT SIDE (HERO)
+   Headline, description, services, CTA bar and footer.
+   ===================================================== */
+.auth-hero {
+  position: relative;
+  z-index: 1; /* stays above background decorations */
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+  max-width: 800px;
+}
+
+/* Top row: logo on the left, handwritten tagline on the right */
+.hero-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+/* Handwritten "Your Growth Our Code" with an underline swoosh */
+.script {
+  font-family: "Caveat", cursive;
+  font-size: 28px;
+  line-height: 1.1;
+  color: #dbe6ff;
+  transform: rotate(-6deg);
+  margin-right: 8%;
+  margin-top: -4px;
+}
+.script svg {
+  display: block;
+  width: 110px;
+  height: 18px;
+  margin-top: 2px;
+}
+.script svg path {
+  fill: none;
+  stroke: var(--cyan);
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+/* Main headline: font size scales with screen width */
+.auth-hero h1 {
+  margin: 0;
+  font-size: clamp(40px, 4.4vw, 68px);
+  line-height: 1.04;
+  font-weight: 800;
+  letter-spacing: -2px;
+}
+
+/* Orange gradient text for "Get Discovered." */
+.grad {
+  color: #ff8a1f; /* fallback if gradient text is unsupported */
+  background: linear-gradient(90deg, #ffa53a, #ff7a14);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.hero-sub {
+  margin: 0;
+  max-width: 600px;
+  font-size: clamp(15px, 1.25vw, 19px);
+  line-height: 1.65;
+  color: #c5d1ea;
+}
+
+/* ---------- Service cards (3 columns) ---------- */
+.feat-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 26px 22px;
+}
+.feat {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+.feat h4 {
+  margin: 2px 0 4px;
+  font-size: 15px;
+  font-weight: 600;
+}
+.feat p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+/* Rounded square icon box */
+.feat-ico {
+  flex: none;
+  width: 52px;
+  height: 52px;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35);
+}
+.feat-ico svg {
+  width: 26px;
+  height: 26px;
+  color: #fff;
+}
+
+/* Icon background colours (set from the `features` array in AuthPage.jsx) */
+.c-blue   { background: linear-gradient(135deg, #1d4fd8, #1637a3); }
+.c-teal   { background: linear-gradient(135deg, #0f9f8e, #0b6e69); }
+.c-purple { background: linear-gradient(135deg, #5b2fd1, #3b1d92); }
+.c-orange { background: linear-gradient(135deg, #f08a1c, #c4620a); }
+.c-blue2  { background: linear-gradient(135deg, #1a56e0, #123a9e); }
+
+/* ---------- Call-to-action bar ---------- */
+.cta-bar {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 18px 24px;
+  margin-top: 6px;
+  border-radius: 16px;
+  border: 1px solid rgba(20, 216, 230, 0.28);
+  background: linear-gradient(90deg, rgba(20, 216, 230, 0.08), rgba(22, 119, 255, 0.05));
+}
+.cta-ico {
+  width: 54px;
+  height: 54px;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  background: rgba(20, 216, 230, 0.12);
+  color: var(--cyan);
+}
+.cta-ico svg {
+  width: 28px;
+  height: 28px;
+}
+.cta-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.cta-text b {
+  font-size: 16px;
+  font-weight: 600;
+}
+.cta-text span {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+/* "Explore Our Services" link, pushed to the right edge */
+.cta-link {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #27b6ff;
+  font-weight: 600;
+  font-size: 14px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.cta-link svg {
+  width: 16px;
+  height: 16px;
+  transition: transform 0.2s;
+}
+.cta-link:hover svg {
+  transform: translateX(4px); /* arrow nudges right on hover */
+}
+
+/* ---------- Footer: website + social icons ---------- */
+.hero-foot {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  margin-top: 10px;
+  color: #b7c3dd;
+  font-size: 14px;
+}
+.hero-foot a {
+  color: inherit;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  transition: color 0.2s;
+}
+.hero-foot a:hover {
+  color: var(--cyan);
+}
+.hero-foot svg {
+  width: 20px;
+  height: 20px;
+}
+/* Thin vertical divider between website and social icons */
+.hero-foot .vr {
+  width: 1px;
+  height: 20px;
+  background: var(--line);
+}
+
+/* =====================================================
+   RIGHT SIDE (FORM PANEL)
+   ===================================================== */
+.auth-panel {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 22px;
+}
+
+/* Glass-style login card */
+.auth-card {
+  width: 100%;
+  max-width: 560px;
+  padding: clamp(28px, 3vw, 44px) clamp(24px, 3vw, 44px);
+  border-radius: 28px;
+  border: 1px solid rgba(20, 216, 230, 0.35);
+  background: linear-gradient(160deg, rgba(20, 50, 100, 0.45), rgba(8, 18, 40, 0.55));
+  backdrop-filter: blur(14px); /* frosted glass effect */
+  box-shadow:
+    0 0 60px rgba(20, 216, 230, 0.08),  /* soft cyan glow */
+    0 30px 80px rgba(0, 0, 0, 0.5);     /* depth shadow */
+}
+.auth-card .logo {
+  margin-bottom: 28px;
+}
+.auth-card h2 {
+  margin: 0 0 8px;
+  font-size: 38px;
+  font-weight: 700;
+  letter-spacing: -1px;
+}
+.wave {
+  display: inline-block;
+  font-size: 32px; /* waving-hand emoji */
+}
+.auth-muted {
+  margin: 0 0 26px;
+  color: #aebbd6;
+  font-size: 16px;
+}
+
+/* ---------- Input fields (icon on the left) ---------- */
+.field {
+  position: relative;
+  margin-bottom: 16px;
+}
+.field input {
+  width: 100%;
+  height: 60px;
+  padding: 0 52px 0 56px; /* left space for icon, right space for eye button */
+  border-radius: 14px;
+  outline: none;
+  background: rgba(5, 12, 28, 0.75);
+  border: 1px solid var(--line);
+  color: #fff;
+  font-size: 16px;
+  font-family: inherit;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.field input::placeholder {
+  color: #7f90b0;
+}
+/* Cyan border + soft ring when the field is focused */
+.field input:focus {
+  border-color: var(--cyan);
+  box-shadow: 0 0 0 4px rgba(20, 216, 230, 0.13);
+}
+
+/* Icon inside the input (mail, lock, user) */
+.f-ico {
+  position: absolute;
+  left: 18px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 24px;
+  height: 24px;
+  color: #c4d2ee;
+  pointer-events: none; /* clicks go through to the input */
+}
+
+/* Show / hide password button */
+.eye {
+  position: absolute;
+  right: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  color: #6fc7ff;
+  display: grid;
+  padding: 4px;
+}
+.eye svg {
+  width: 22px;
+  height: 22px;
+}
+
+/* ---------- "Remember me" + "Forgot password?" row ---------- */
+.row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin: 4px 0 22px;
+}
+
+/* Custom checkbox: the real input is hidden, .box is drawn instead */
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 15px;
+  cursor: pointer;
+  color: #dce6fb;
+}
+.check input {
+  display: none;
+}
+.check .box {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  border: 1.5px solid #4b6a9f;
+  color: transparent; /* tick is invisible until checked */
+  transition: all 0.15s;
+}
+.check input:checked + .box {
+  background: var(--blue);
+  border-color: var(--blue);
+  color: #fff; /* tick becomes visible */
+}
+
+/* Text-style button, used for "Forgot password?" */
+.link {
+  background: none;
+  border: 0;
+  color: #27c7ff;
+  font-size: 14.5px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+}
+.link:hover {
+  text-decoration: underline;
+}
+
+/* ---------- Error / success messages ---------- */
+.msg {
+  padding: 12px 14px;
+  border-radius: 10px;
+  font-size: 14px;
+  line-height: 1.45;
+  margin-bottom: 16px;
+}
+.msg.err {
+  background: rgba(255, 77, 79, 0.12);
+  border: 1px solid rgba(255, 77, 79, 0.35);
+  color: #ffa3a4;
+}
+.msg.ok {
+  background: rgba(20, 216, 230, 0.1);
+  border: 1px solid rgba(20, 216, 230, 0.35);
+  color: #86f1f7;
+}
+
+/* ---------- Primary button (Log in / Sign up) ---------- */
+.btn-primary {
+  width: 100%;
+  height: 60px;
+  border: 0;
+  border-radius: 14px;
+  cursor: pointer;
+  margin-top: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  font-size: 18px;
+  font-weight: 600;
+  color: #fff;
+  font-family: inherit;
+  background: linear-gradient(90deg, #0a6cff, #00dcec);
+  box-shadow: 0 10px 30px rgba(0, 190, 230, 0.3);
+  transition: transform 0.15s, box-shadow 0.2s;
+}
+.btn-primary:hover {
+  transform: translateY(-2px); /* lifts slightly on hover */
+  box-shadow: 0 14px 36px rgba(0, 200, 240, 0.45);
+}
+.btn-primary:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+.btn-primary svg {
+  width: 20px;
+  height: 20px;
+}
+
+/* Loading spinner shown while the request is running */
+.spinner {
+  width: 22px;
+  height: 22px;
+  border: 3px solid rgba(255, 255, 255, 0.4);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ---------- "or" divider ---------- */
+.or {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 20px 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+.or::before,
+.or::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
+
+/* ---------- Google button (light background) ---------- */
+.btn-google {
+  width: 100%;
+  height: 58px;
+  border: 0;
+  border-radius: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: #f4f7fd;
+  color: #1b2438;
+  font-size: 16.5px;
+  font-weight: 600;
+  font-family: inherit;
+  transition: transform 0.15s, background 0.2s;
+}
+.btn-google:hover {
+  background: #fff;
+  transform: translateY(-1px);
+}
+
+/* ---------- "Don't have an account? Sign up" ---------- */
+.switch {
+  text-align: center;
+  margin: 24px 0 18px;
+  color: #aebbd6;
+  font-size: 15.5px;
+}
+.switch button {
+  background: none;
+  border: 0;
+  color: #27c7ff;
+  font-weight: 600;
+  font-size: inherit;
+  cursor: pointer;
+  font-family: inherit;
+}
+.switch button:hover {
+  text-decoration: underline;
+}
+
+/* ---------- "Your data is safe with us" note ---------- */
+.safe {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  font-size: 13px;
+  color: #aebbd6;
+}
+.safe svg {
+  color: var(--cyan);
+}
+
+/* "Innovate • Automate • Grow" under the card */
+.tag-foot {
+  align-self: flex-end;
+  font-size: 13.5px;
+  color: var(--muted);
+}
+.tag-foot i {
+  margin: 0 8px;
+  font-style: normal;
+  opacity: 0.6;
+}
+
+/* =====================================================
+   RESPONSIVE
+   ===================================================== */
+
+/* Medium screens: services switch to 2 columns */
+@media (max-width: 1200px) {
+  .feat-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* Tablets and phones: hide the left side, show only the form */
+@media (max-width: 980px) {
+  .auth-shell {
+    grid-template-columns: 1fr;
+    padding: 24px 16px;
+  }
+  .auth-hero {
+    display: none;
+  }
+  .tag-foot,
+  .bg-wave {
+    display: none;
+  }
+}
