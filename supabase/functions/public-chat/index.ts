@@ -210,6 +210,16 @@ Deno.serve(async (req) => {
       return fail(403, "ORIGIN_NOT_ALLOWED", "This website is not allowed to use this chatbot");
     }
 
+    // ===== PLAN LOCK (1/4): does this organization have an active paid plan? =====
+    const { data: planActive, error: planErr } = await admin.rpc("has_active_subscription", {
+      org_id: bot.organization_id,
+    });
+    if (planErr) {
+      console.error("Plan check failed:", planErr.message);
+      return fail(503, "PLAN_CHECK_FAILED", "Please try again shortly.");
+    }
+    const planOk = planActive === true;
+
     if (body?.action === "config") {
       return json(200, {
         name: bot.name,
@@ -217,11 +227,16 @@ Deno.serve(async (req) => {
         theme: bot.theme ?? null,
         logoUrl: typeof bot.logo_url === "string" && bot.logo_url.startsWith("https://") ? bot.logo_url : null,
         collectLeads: bot.collect_leads === true,
+        // ===== PLAN LOCK (2/4): widget can use this to show an "unavailable" message =====
+        suspended: !planOk,
       });
     }
 
     // 3b. Visitor Details (Name + Email required, phone optional)
     if (body?.action === "lead") {
+      // ===== PLAN LOCK (3/4): no leads are collected without an active plan =====
+      if (!planOk) return fail(402, "PLAN_REQUIRED", "This assistant is currently unavailable.");
+
       const vid = typeof body?.visitorId === "string" ? body.visitorId : "";
       if (!UUID.test(vid)) return fail(400, "VALIDATION_ERROR", "Invalid visitorId");
       if (bot.collect_leads !== true) {
@@ -282,6 +297,11 @@ Deno.serve(async (req) => {
           agent: r.sent_by_agent === true,
         })),
       });
+    }
+
+    // ===== PLAN LOCK (4/4): no active plan = no AI reply (this is what costs money) =====
+    if (!planOk) {
+      return fail(402, "PLAN_REQUIRED", "This assistant is currently unavailable.");
     }
 
     // 4. Validate

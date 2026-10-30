@@ -1,32 +1,29 @@
 import { useState } from "react";
 import { useAuth } from "./AuthContext";
 import "./auth.css";
+import logo from "./assets/logo.jpg";
 
 /* =====================================================
    Logo component
-   Inline SVG "V" mark + "varikode.ai" text.
+   Shows the Varikode logo image (src/assets/logo.jpg).
    `size` controls the overall scale (used in hero & card).
+   The image already contains the "Varikode TECHNOLOGY"
+   text, so no extra text is drawn next to it.
    ===================================================== */
 const Logo = ({ size = 64 }) => (
   <div className="logo">
-    <svg width={size * 0.95} height={size * 0.85} viewBox="0 0 64 56" aria-hidden="true">
-      <defs>
-        {/* Two gradients to mimic the two-tone V logo */}
-        <linearGradient id="lg1" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stopColor="#2f6bff" />
-          <stop offset="1" stopColor="#12b6ff" />
-        </linearGradient>
-        <linearGradient id="lg2" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stopColor="#12c8ff" />
-          <stop offset="1" stopColor="#19e0d2" />
-        </linearGradient>
-      </defs>
-      <polygon points="2,4 20,4 34,40 25,54" fill="url(#lg1)" />
-      <polygon points="62,4 43,4 32,28 38,40" fill="url(#lg2)" />
-    </svg>
-    <div className="logo-text" style={{ fontSize: size * 0.62 }}>
-      varikode<span>.ai</span>
-    </div>
+    <img
+      src={logo}
+      alt="Varikode Technology"
+      style={{
+        height: size * 1.4, // change 1.4 to make the logo bigger / smaller
+        width: "auto",
+        display: "block",
+        borderRadius: 12,
+        background: "#fff", // JPG has a white background
+        padding: 4,
+      }}
+    />
   </div>
 );
 

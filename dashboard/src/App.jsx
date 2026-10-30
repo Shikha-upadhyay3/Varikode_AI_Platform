@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import "./App.css";
 import "./theme.css";
 import ChatWidget from "./ChatWidget";
@@ -407,6 +407,29 @@ function Sidebar({ active, setActive, open, close }) {
   const { user, signOut } = useAuth();
   const displayName = getDisplayName(user);
 
+  /* ---------- Profile popup (Log out) ---------- */
+  const [profileOpen, setProfileOpen] = useState(false);
+  const profileRef = useRef(null);
+
+  // Close the popup when clicking outside it or pressing Esc
+  useEffect(() => {
+    const onClick = (e) => {
+      if (profileRef.current && !profileRef.current.contains(e.target)) setProfileOpen(false);
+    };
+    const onKey = (e) => e.key === "Escape" && setProfileOpen(false);
+    document.addEventListener("mousedown", onClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onClick);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, []);
+
+  const handleLogout = async () => {
+    setProfileOpen(false);
+    await signOut();
+  };
+
   const {
     organization,
     role,
@@ -541,20 +564,41 @@ function Sidebar({ active, setActive, open, close }) {
             <p>{usedMessages.toLocaleString()} <span>of {USAGE_LIMIT.toLocaleString()} messages</span></p>
             <button onClick={() => setActive("Assistant settings")}>Upgrade plan <Icon name="arrow" size={14} /></button>
           </div>
-          <div className="profile">
-            <div className="profile-avatar">{displayName[0].toUpperCase()}</div>
-            <div className="profile-copy">
-              <strong className="profile-name">{displayName}</strong>
-              <small>{roleLabel || "Member"}</small>
-            </div>
-            <button
-              className="profile-menu"
-              aria-label="Sign out"
-              title="Sign out"
-              onClick={signOut}
+
+          {/* Profile row + popup with Log out */}
+          <div className="profile-wrap" ref={profileRef}>
+            {profileOpen && (
+              <div className="profile-pop" role="menu">
+                <div className="profile-pop-head">
+                  <strong>{displayName}</strong>
+                  <span>{user?.email}</span>
+                </div>
+                <button type="button" className="profile-pop-logout" role="menuitem" onClick={handleLogout}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                    <path d="M16 17l5-5-5-5" />
+                    <path d="M21 12H9" />
+                  </svg>
+                  Log out
+                </button>
+              </div>
+            )}
+
+            <div
+              className="profile"
+              style={{ cursor: "pointer" }}
+              onClick={() => setProfileOpen((v) => !v)}
             >
-              •••
-            </button>
+              <div className="profile-avatar">{displayName[0].toUpperCase()}</div>
+              <div className="profile-copy">
+                <strong className="profile-name">{displayName}</strong>
+                <small>{roleLabel || "Member"}</small>
+              </div>
+              <button className="profile-menu" type="button" aria-label="Open profile menu">
+                •••
+              </button>
+            </div>
           </div>
         </div>
       </aside>
