@@ -387,7 +387,19 @@ function Donut({ parts, total }) {
     </svg>
   );
 }
-
+// Company logo from /public/logo.jpg. If the file is missing, the fallback is shown instead.
+function LogoImage({ fallback = null }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) return fallback;
+  return (
+    <img
+      src="/logo.jpg"
+      alt="Varikode"
+      onError={() => setFailed(true)}
+      style={{ width: "100%", height: "100%", objectFit: "contain", display: "block", borderRadius: "inherit" }}
+    />
+  );
+}
 /* ------------------------------------------------------------------ */
 /* Sidebar                                                             */
 /* ------------------------------------------------------------------ */
@@ -462,8 +474,10 @@ function Sidebar({ active, setActive, open, close }) {
       {open && <button className="mobile-scrim" onClick={close} aria-label="Close menu" />}
       <aside className={`sidebar ${open ? "sidebar-open" : ""}`}>
         <a className="brand" href="#overview" onClick={() => setActive("Overview")}>
-          <span className="brand-mark"><Icon name="spark" size={20} /></span>
-          <span>varikode<span className="brand-ai">.ai</span></span>
+          <span className="brand-mark" style={{ background: "#fff", boxShadow: "none", padding: 2 }}>
+            <LogoImage fallback={<Icon name="spark" size={20} />} />
+          </span>
+          <span>Varikode<span className="brand-ai">.ai</span></span>
         </a>
 
         <div className="workspace-label">WORKSPACE</div>
@@ -473,7 +487,9 @@ function Sidebar({ active, setActive, open, close }) {
         ) : organization ? (
           <>
             <div className="workspace-card">
-              <div className="workspace-avatar">{organization.name[0].toUpperCase()}</div>
+              <div className="workspace-avatar" style={{ background: "#fff", overflow: "hidden", padding: 2 }}>
+                <LogoImage fallback={organization.name[0].toUpperCase()} />
+              </div>
               <div className="workspace-copy">
                 <strong>{organization.name}</strong>
                 <small>{roleLabel}</small>
@@ -593,7 +609,12 @@ function EmbedCenter({ organization }) {
   }
 
   function makeSnippet(bot, publicKey) {
-    const scriptUrl = new URL("/embed.js", window.location.origin).toString();
+        // Always use the public (live) dashboard address, even when the code is copied from localhost
+    const PRODUCTION_APP_URL = "https://varikode-ai-platform-cia6.vercel.app";
+    const appBase = ["localhost", "127.0.0.1"].includes(window.location.hostname)
+      ? PRODUCTION_APP_URL
+      : window.location.origin;
+    const scriptUrl = new URL("/embed.js", appBase).toString();
     const apiUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/public-chat`;
     return `<script src="${scriptUrl}" data-bot-key="${publicKey}" data-api="${apiUrl}" data-title="${bot.name}" defer></script>`;
   }
