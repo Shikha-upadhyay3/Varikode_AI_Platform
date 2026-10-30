@@ -842,12 +842,14 @@ function AssistantAvatar({ assistant, size = 28 }) {
 
 
 const EMPTY_CHATBOT_FORM = {
+  
   name: "",
   description: "",
   welcome_message: "",
   theme: "ocean",
   collect_leads: true,
 };
+const MAX_CHATBOTS_PER_ORG = 1;
 
 function ChatbotManagement() {
   const {
@@ -873,6 +875,7 @@ function ChatbotManagement() {
   const [removeLogo, setRemoveLogo] = useState(false);
 
   const canManage = role === "owner" || role === "admin";
+  const limitReached = chatbots.length >= MAX_CHATBOTS_PER_ORG;
 
   function handleLogoPick(event) {
     const file = event.target.files?.[0];
@@ -944,15 +947,22 @@ function ChatbotManagement() {
   });
 
   function openCreateForm() {
-    setEditing(null);
-    setForm(EMPTY_CHATBOT_FORM);
-    setLogoFile(null);
-    setLogoPreview("");
-    setRemoveLogo(false);
-    setFormError("");
+    
+  if (limitReached) {
     setSuccess("");
-    setFormOpen(true);
+    setChatbotError("Each workspace can have only one chatbot. Edit or delete the existing chatbot to create a new one.");
+    return;
   }
+  setChatbotError("");
+  setEditing(null);
+  setForm(EMPTY_CHATBOT_FORM);
+  setLogoFile(null);
+  setLogoPreview("");
+  setRemoveLogo(false);
+  setFormError("");
+  setSuccess("");
+  setFormOpen(true);
+}
 
   function openEditForm(chatbot) {
     setEditing(chatbot);
@@ -1008,6 +1018,28 @@ function ChatbotManagement() {
       setFormError("A chatbot with this name already exists in this workspace.");
       return;
     }
+    // new one chatbot per workspace
+    if (!editing) {
+  if (chatbots.length >= MAX_CHATBOTS_PER_ORG) {
+    setFormError("Each workspace can have only one chatbot.");
+    return;
+  }
+
+  //  confirm from DB 
+  const { count, error: countError } = await supabase
+    .from("chatbots")
+    .select("id", { count: "exact", head: true })
+    .eq("organization_id", organization.id);
+
+  if (countError) {
+    setFormError(countError.message);
+    return;
+  }
+  if ((count ?? 0) >= MAX_CHATBOTS_PER_ORG) {
+    setFormError("Each workspace can have only one chatbot.");
+    return;
+  }
+}
 
     setSaving(true);
 
@@ -1037,10 +1069,14 @@ function ChatbotManagement() {
           .single();
 
     if (result.error) {
-      setSaving(false);
-      setFormError(result.error.message);
-      return;
-    }
+  setSaving(false);
+  setFormError(
+    result.error.code === "23505"
+      ? "Each workspace can have only one chatbot."
+      : result.error.message
+  );
+  return;
+}
 
     let savedBot = result.data;
     let logoWarning = "";
@@ -1138,10 +1174,29 @@ function ChatbotManagement() {
             <h1>Chatbots</h1>
             <p className="welcome-subtitle">Create, publish, and manage the assistants available to your workspace.</p>
           </div>
-          <button className="primary-button" type="button" onClick={openCreateForm} disabled={!canManage || !organization}>
-            <Icon name="plus" size={16} />
-            Create chatbot
-          </button>
+          <button
+  className="primary-button"
+  type="button"
+  onClick={openCreateForm}
+  disabled={!canManage || !organization || loadingChatbots || limitReached}
+  title={limitReached ? "One chatbot per workspace is allowed" : undefined}
+>
+  <Icon name="plus" size={16} />
+  Create chatbot
+</button>
+{limitReached && (
+  <p
+    style={{
+      margin: "8px 0 0",
+      fontSize: "10px",
+      color: "#8fa3bf",
+      maxWidth: "260px",
+      lineHeight: 1.4,
+    }}
+  >
+    Your workspace already has a chatbot. Edit or delete it to create a new one.
+  </p>
+)}
         </section>
 
         {(organizationError || chatbotError || success || (!loadingOrganization && organization && !canManage)) && (
