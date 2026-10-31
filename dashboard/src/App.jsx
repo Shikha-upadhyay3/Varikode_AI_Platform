@@ -8,6 +8,10 @@ import KnowledgeSources from "./KnowledgeSources";
 import Leads from "./Leads";
 import { useChats } from "./useChats";
 import { useOverviewStats, pctChange } from "./useOverviewStats";
+import UsageCard from "./components/billing/UsageCard";
+import PricingPage from "./components/billing/PricingPage";
+import { getPlan } from "./config/plans";
+import CreditsBanner from "./CreditsBanner";
 
 function Icon({ name, size = 18 }) {
   const paths = {
@@ -477,9 +481,9 @@ function Sidebar({ active, setActive, open, close }) {
 
   const roleLabel = role ? role.charAt(0).toUpperCase() + role.slice(1) : "";
     const { stats: sidebarStats } = useOverviewStats(organization?.id, 30);
-  const USAGE_LIMIT = 10000;
+  const currentPlan = getPlan(organization?.plan ?? "free");
   const usedMessages = sidebarStats?.month_messages ?? 0;
-  const usagePct = Math.min(100, Math.round((usedMessages / USAGE_LIMIT) * 100));
+  const resetsOn = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 1);
   const sourcesCount = sidebarStats?.knowledge_sources?.total ?? 0;
 
   const links = [
@@ -557,13 +561,17 @@ function Sidebar({ active, setActive, open, close }) {
           ))}
         </nav>
 
-        <div className="sidebar-bottom">
-          <div className="plan-card">
-            <div className="plan-heading"><span>Monthly usage</span><span>{usagePct}%</span></div>
-            <div className="usage-track"><span style={{ width: `${usagePct}%` }} /></div>
-            <p>{usedMessages.toLocaleString()} <span>of {USAGE_LIMIT.toLocaleString()} messages</span></p>
-            <button onClick={() => setActive("Assistant settings")}>Upgrade plan <Icon name="arrow" size={14} /></button>
-          </div>
+        <div className="sidebar-bottom"> 
+          <UsageCard
+            planName={currentPlan.name}
+            used={usedMessages}
+            limit={currentPlan.messages ?? 0}
+            resetsOn={resetsOn}
+            onUpgrade={() => {
+              setActive("Pricing");
+              close();
+            }}
+          />
 
           {/* Profile row + popup with Log out */}
           <div className="profile-wrap" ref={profileRef}>
@@ -2059,12 +2067,26 @@ export default function App() {
         <button className="mobile-menu" onClick={() => setMenuOpen(true)} aria-label="Open menu"><Icon name="menu" /></button>
                 <MobileTabs active={active} setActive={setActive} />
 
+                        {active !== "Pricing" && (
+          <CreditsBanner
+            organizationId={organization?.id}
+            limit={getPlan(organization?.plan ?? "free").messages ?? 0}
+            onUpgrade={() => setActive("Pricing")}
+          />
+        )}
+
         {active === "Chatbots" && <ChatbotManagement />}
         {active === "Chats" && <ChatHistory assistant={assistant} chats={chats} onDelete={deleteChat} />}
         {active === "Leads" && <LeadsPage />}
         {active === "Assistant settings" && <AssistantSettings assistant={assistant} onSave={saveAssistant} />}
         {active === "Knowledge sources" && <KnowledgeSourcesPage />}
-        {active !== "Chatbots" && active !== "Knowledge sources" && active !== "Chats" && active !== "Leads" && active !== "Assistant settings" && <Overview active={active} setActive={setActive} />}
+        {active === "Pricing" && (
+          <>
+            <Topbar title="Pricing" />
+            <PricingPage currentPlanId={organization?.plan ?? "free"} currency="INR" />
+          </>
+        )}
+        {active !== "Chatbots" && active !== "Knowledge sources" && active !== "Chats" && active !== "Leads" && active !== "Assistant settings" && active !== "Pricing" && <Overview active={active} setActive={setActive} />}
       
       </div>
         <ChatWidget organizationId={organization?.id} assistant={assistant} onMessageSaved={reloadChats} />

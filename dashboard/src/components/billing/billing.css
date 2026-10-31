@@ -1,0 +1,352 @@
+/* Shared styles for UsageCard and PricingPage.
+   Colors are CSS variables with fallbacks, so you can match them to your theme
+   by defining --vk-* on :root. */
+
+.vk-usage,
+.vk-pricing {
+  --vk-surface: #0e1829;
+  --vk-surface-2: #121f33;
+  --vk-border: rgba(255, 255, 255, 0.09);
+  --vk-text: #e8eef8;
+  --vk-muted: #8d9db6;
+  --vk-accent: #2dd4bf;
+  --vk-accent-ink: #04201c;
+  --vk-warn: #f5a524;
+  --vk-danger: #f0556a;
+  color: var(--vk-text);
+  box-sizing: border-box;
+}
+.vk-usage *,
+.vk-pricing * {
+  box-sizing: border-box;
+}
+
+/* ---------- Usage card (sidebar) ---------- */
+
+.vk-usage {
+  padding: 14px;
+  border: 1px solid var(--vk-border);
+  border-radius: 12px;
+  background: var(--vk-surface);
+  font-size: 13px;
+}
+.vk-usage__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: 600;
+}
+.vk-usage__plan {
+  margin-top: 2px;
+  color: var(--vk-muted);
+  font-size: 12px;
+}
+.vk-usage__pct {
+  color: var(--vk-accent);
+  font-variant-numeric: tabular-nums;
+}
+.vk-usage__bar {
+  height: 6px;
+  margin: 10px 0 8px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.08);
+}
+.vk-usage__bar > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--vk-accent);
+  transition: width 0.4s ease;
+}
+.vk-usage__nums {
+  display: flex;
+  justify-content: space-between;
+  color: var(--vk-muted);
+  font-variant-numeric: tabular-nums;
+}
+.vk-usage__nums strong {
+  color: var(--vk-text);
+}
+.vk-usage__reset {
+  margin-top: 6px;
+  color: var(--vk-muted);
+  font-size: 12px;
+}
+.vk-usage__note {
+  margin: 10px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.vk-usage__cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #5eead4;
+  font: inherit;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+}
+.vk-usage__cta:hover {
+  text-decoration: underline;
+}
+.vk-usage[data-state="warn"] .vk-usage__bar > span {
+  background: var(--vk-warn);
+}
+.vk-usage[data-state="warn"] .vk-usage__pct,
+.vk-usage[data-state="warn"] .vk-usage__note {
+  color: var(--vk-warn);
+}
+.vk-usage[data-state="full"] .vk-usage__bar > span {
+  background: var(--vk-danger);
+}
+.vk-usage[data-state="full"] .vk-usage__pct,
+.vk-usage[data-state="full"] .vk-usage__note {
+  color: var(--vk-danger);
+}
+
+/* ---------- Pricing page ---------- */
+
+.vk-pricing {
+  width: 100%;
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 32px 24px 64px;
+}
+.vk-pricing__top {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  align-items: flex-end;
+  justify-content: space-between;
+  margin-bottom: 28px;
+}
+.vk-pricing__title {
+  margin: 0 0 6px;
+  font-size: 30px;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+}
+.vk-pricing__sub {
+  margin: 0;
+  max-width: 52ch;
+  color: var(--vk-muted);
+  line-height: 1.5;
+}
+
+.vk-toggle {
+  display: inline-flex;
+  padding: 4px;
+  border: 1px solid var(--vk-border);
+  border-radius: 99px;
+  background: var(--vk-surface);
+}
+.vk-toggle button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border: 0;
+  border-radius: 99px;
+  background: none;
+  color: var(--vk-muted);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.vk-toggle button[aria-pressed="true"] {
+  background: var(--vk-surface-2);
+  color: var(--vk-text);
+  box-shadow: inset 0 0 0 1px var(--vk-border);
+}
+.vk-toggle__save {
+  padding: 2px 8px;
+  border-radius: 99px;
+  background: var(--vk-accent);
+  color: var(--vk-accent-ink);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.vk-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 14px;
+  align-items: stretch;
+}
+
+.vk-plan {
+  display: flex;
+  flex-direction: column;
+  padding: 22px 20px;
+  border: 1px solid var(--vk-border);
+  border-radius: 14px;
+  background: var(--vk-surface);
+}
+.vk-plan[data-popular="true"] {
+  border-color: var(--vk-accent);
+  background: linear-gradient(180deg, rgba(45, 212, 191, 0.08), var(--vk-surface) 40%);
+}
+.vk-plan__name {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0;
+  font-size: 20px;
+}
+.vk-plan__badge {
+  padding: 2px 8px;
+  border-radius: 99px;
+  background: var(--vk-accent);
+  color: var(--vk-accent-ink);
+  font-size: 11px;
+  font-weight: 700;
+}
+.vk-plan__tagline {
+  min-height: 42px;
+  margin: 8px 0 18px;
+  color: var(--vk-muted);
+  font-size: 14px;
+  line-height: 1.45;
+}
+.vk-plan__price {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 34px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.vk-plan__price small {
+  color: var(--vk-muted);
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+.vk-plan__billed {
+  min-height: 20px;
+  margin: 4px 0 18px;
+  color: var(--vk-muted);
+  font-size: 13px;
+}
+.vk-plan__btn {
+  width: 100%;
+  padding: 11px 14px;
+  border: 1px solid var(--vk-accent);
+  border-radius: 9px;
+  background: var(--vk-accent);
+  color: var(--vk-accent-ink);
+  font: inherit;
+  font-weight: 700;
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+}
+.vk-plan__btn:hover {
+  filter: brightness(1.08);
+}
+.vk-plan__btn[data-variant="ghost"] {
+  background: transparent;
+  color: var(--vk-text);
+  border-color: var(--vk-border);
+}
+.vk-plan__btn:disabled {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: transparent;
+  color: var(--vk-muted);
+  cursor: default;
+  filter: none;
+}
+.vk-plan__list {
+  display: grid;
+  gap: 10px;
+  margin: 22px 0 0;
+  padding: 18px 0 0;
+  border-top: 1px solid var(--vk-border);
+  list-style: none;
+  font-size: 14px;
+  line-height: 1.4;
+}
+.vk-plan__list li {
+  display: flex;
+  gap: 10px;
+}
+.vk-plan__list svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--vk-accent);
+}
+
+.vk-live {
+  min-height: 22px;
+  margin: 16px 0 0;
+  color: var(--vk-warn);
+  font-size: 14px;
+}
+
+.vk-faq {
+  max-width: 760px;
+  margin: 48px auto 0;
+}
+.vk-faq h2 {
+  margin: 0 0 12px;
+  font-size: 22px;
+}
+.vk-faq details {
+  border-top: 1px solid var(--vk-border);
+}
+.vk-faq details:last-child {
+  border-bottom: 1px solid var(--vk-border);
+}
+.vk-faq summary {
+  padding: 16px 0;
+  font-weight: 600;
+  cursor: pointer;
+}
+.vk-faq p {
+  margin: 0 0 16px;
+  color: var(--vk-muted);
+  line-height: 1.6;
+}
+
+.vk-usage button:focus-visible,
+.vk-usage a:focus-visible,
+.vk-pricing button:focus-visible,
+.vk-pricing a:focus-visible,
+.vk-pricing summary:focus-visible {
+  outline: 2px solid var(--vk-accent);
+  outline-offset: 2px;
+}
+
+@media (max-width: 1180px) {
+  .vk-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+@media (max-width: 820px) {
+  .vk-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 540px) {
+  .vk-pricing {
+    padding: 24px 16px 48px;
+  }
+  .vk-grid {
+    grid-template-columns: 1fr;
+  }
+  .vk-plan__tagline {
+    min-height: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .vk-usage__bar > span {
+    transition: none;
+  }
+}

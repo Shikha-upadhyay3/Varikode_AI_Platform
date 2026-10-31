@@ -90,6 +90,10 @@
     var logoUrl = typeof cfg.logoUrl === "string" && /^https:\/\//i.test(cfg.logoUrl) ? cfg.logoUrl : "";
     var askLead = cfg.collectLeads === true && !state.leadDone;
 
+    // Shown to visitors when the website owner has used up the monthly AI replies.
+    // The visitor cannot fix this, so it is a plain notice with no Retry button.
+    var CREDITS_TEXT = "This assistant has reached its message limit for now. Please contact the website owner.";
+
     // Shadow DOM keeps the host website's CSS from affecting the widget (and vice versa)
     var host = document.createElement("div");
     host.style.setProperty("all", "initial", "important");
@@ -110,6 +114,7 @@
       '.u{align-self:flex-end;background:' + color + ';color:#fff}' +
       '.a{align-self:flex-start;background:#e2e8f0;color:#0f172a}' +
       '.agent{border-left:3px solid ' + color + '}' +
+      '.notice{background:#fef3c7;color:#92400e;border:1px solid #fcd34d}' +
       '.btn.alert::after{content:"";position:absolute;top:6px;right:6px;width:12px;height:12px;border-radius:50%;background:#ef4444;border:2px solid #fff}' +
       '.e{align-self:stretch;max-width:100%;background:#fee2e2;color:#991b1b;font-size:13px;display:flex;align-items:center;justify-content:space-between;gap:8px}' +
       '.e button{border:1px solid #991b1b;background:#fff;color:#991b1b;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:12px}' +
@@ -201,6 +206,11 @@
     }
 
     add(welcome, "a");
+
+    // If the monthly AI replies are already used up, tell the visitor right away.
+    // The input stays enabled on purpose: a conversation handled by a human team
+    // member still works, because the server saves those messages without calling the AI.
+    if (cfg.creditsExhausted === true) add(CREDITS_TEXT, "a notice");
 
     // -------------------------------------------------------------------------
     // HISTORY + TEAM REPLIES
@@ -380,6 +390,16 @@
 
         if (!res.ok) {
           var data = await res.json().catch(function () { return null; });
+
+          // Monthly AI replies are used up: show a plain notice, no red box and no Retry
+          if (data && data.error && data.error.code === "CREDITS_EXHAUSTED") {
+            bot.className = "m a notice";
+            bot.textContent = data.error.message || CREDITS_TEXT;
+            scrollDown();
+            busy = false; sendBtn.disabled = false; input.focus();
+            return;
+          }
+
           // Conversation no longer exists on the server: start a fresh one next time
           if (res.status === 404 && state.conversationId) { state.conversationId = undefined; save(); }
           throw new Error((data && data.error && data.error.message) || "Something went wrong.");
