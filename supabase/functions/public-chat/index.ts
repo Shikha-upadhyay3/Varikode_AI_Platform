@@ -5,6 +5,10 @@ const BOT_DAILY_LIMIT = 500;
 const HISTORY_LIMIT = 20;
 const HUMAN_ACTIVE_MINUTES = 15;
 
+// Free plan allowance: AI replies per organization per calendar month (UTC).
+// Change it without redeploying code by setting the FREE_MONTHLY_MESSAGES secret.
+const FREE_MONTHLY_MESSAGES = Number(Deno.env.get("FREE_MONTHLY_MESSAGES") ?? "50");
+
 const MODEL = Deno.env.get("GEMINI_MODEL") ?? "gemini-3.6-flash";
 
 const GEMINI_TOTAL_TIMEOUT_MS = 25_000;
@@ -44,6 +48,26 @@ function timeoutError() {
   const e = new Error("Gemini timeout");
   e.name = "AbortError";
   return e;
+}
+
+// Counts the AI replies an organization has used since the start of this month (UTC).
+// Replies written by a human team member (sent_by_agent) are not counted.
+// Returns null if the count could not be read.
+async function countMonthReplies(orgId: string): Promise<number | null> {
+  const now = new Date();
+  const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
+  const { count, error } = await admin
+    .from("messages")
+    .select("id, conversations!inner(organization_id)", { count: "exact", head: true })
+    .eq("conversations.organization_id", orgId)
+    .eq("role", "assistant")
+    .or("sent_by_agent.is.null,sent_by_agent.eq.false")
+    .gte("created_at", monthStart);
+  if (error) {
+    console.error("Credit check failed:", error.message);
+    return null;
+  }
+  return count ?? 0;
 }
 
 async function callGemini(contents: unknown[], systemPrompt: string | null): Promise<Response> {
@@ -210,15 +234,14 @@ Deno.serve(async (req) => {
       return fail(403, "ORIGIN_NOT_ALLOWED", "This website is not allowed to use this chatbot");
     }
 
-    // ===== PLAN LOCK (1/4): does this organization have an active paid plan? =====
-    const { data: planActive, error: planErr } = await admin.rpc("has_active_subscription", {
-      org_id: bot.organization_id,
-    });
-    if (planErr) {
-      console.error("Plan check failed:", planErr.message);
-      return fail(503, "PLAN_CHECK_FAILED", "Please try again shortly.");
-    }
-    const planOk = planActive === true;
+    // True when the organization has used up its monthly AI replies.
+    // If the count cannot be read, the chatbot keeps working (the error is logged).
+    const isOutOfCredits = async () => {
+      const used = await countMonthReplies(bot.organization_id);
+      return used !== null && used >= FREE_MONTHLY_MESSAGES;
+    };
+    const CREDITS_MESSAGE =
+      "This assistant has reached its message limit for now. Please contact the website owner.";
 
     if (body?.action === "config") {
       return json(200, {
@@ -227,16 +250,14 @@ Deno.serve(async (req) => {
         theme: bot.theme ?? null,
         logoUrl: typeof bot.logo_url === "string" && bot.logo_url.startsWith("https://") ? bot.logo_url : null,
         collectLeads: bot.collect_leads === true,
-        // ===== PLAN LOCK (2/4): widget can use this to show an "unavailable" message =====
-        suspended: !planOk,
+        // The widget can use this to show a notice instead of the input box
+        creditsExhausted: await isOutOfCredits(),
       });
     }
 
     // 3b. Visitor Details (Name + Email required, phone optional)
+    // Leads are still collected when credits run out, so the client does not lose them.
     if (body?.action === "lead") {
-      // ===== PLAN LOCK (3/4): no leads are collected without an active plan =====
-      if (!planOk) return fail(402, "PLAN_REQUIRED", "This assistant is currently unavailable.");
-
       const vid = typeof body?.visitorId === "string" ? body.visitorId : "";
       if (!UUID.test(vid)) return fail(400, "VALIDATION_ERROR", "Invalid visitorId");
       if (bot.collect_leads !== true) {
@@ -299,11 +320,6 @@ Deno.serve(async (req) => {
       });
     }
 
-    // ===== PLAN LOCK (4/4): no active plan = no AI reply (this is what costs money) =====
-    if (!planOk) {
-      return fail(402, "PLAN_REQUIRED", "This assistant is currently unavailable.");
-    }
-
     // 4. Validate
     const visitorId = typeof body?.visitorId === "string" ? body.visitorId : "";
     const conversationId = typeof body?.conversationId === "string" ? body.conversationId : null;
@@ -325,8 +341,14 @@ Deno.serve(async (req) => {
     if (botTotal >= BOT_DAILY_LIMIT)
       return fail(429, "BOT_BUSY", "This assistant is unavailable right now. Please try later.");
 
-    // Knowledge search has just begun; it will run in parallel with history (it never throws an error)
-    const knowledgePromise = retrieveKnowledge(bot.id, String(bot.name ?? ""), message);
+    // Monthly credits. If they are used up, no AI call is made (no knowledge search either),
+    // but a conversation that a human team member is handling keeps working (see step 6).
+    const outOfCredits = await isOutOfCredits();
+
+    // Knowledge search starts now and runs in parallel with history (it never throws an error)
+    const knowledgePromise = outOfCredits
+      ? Promise.resolve([] as string[])
+      : retrieveKnowledge(bot.id, String(bot.name ?? ""), message);
     const businessNamePromise = (async () => {
       try {
         const { data: org } = await admin.from("organizations").select("name")
@@ -346,7 +368,7 @@ Deno.serve(async (req) => {
       if (!convo) return fail(404, "NOT_FOUND", "Conversation not found");
       convoId = convo.id;
 
-      // Agar team ne abhi reply kiya hai, to AI jawab na de. Sirf visitor ka message save karo.
+      // If the team replied recently, the AI stays silent. Only the visitor's message is saved.
       const since = new Date(Date.now() - HUMAN_ACTIVE_MINUTES * 60 * 1000).toISOString();
       const { data: agentMsg } = await admin.from("messages").select("id")
         .eq("conversation_id", convoId)
@@ -377,6 +399,11 @@ Deno.serve(async (req) => {
       history = (recent ?? []).reverse();
     }
 
+    // No credits left and no human is handling this chat: stop before calling Gemini
+    if (outOfCredits) {
+      return fail(402, "CREDITS_EXHAUSTED", CREDITS_MESSAGE);
+    }
+
     // 7. Gemini
     const contents = [...history, { role: "user", content: message }].map((m) => ({
       role: m.role === "assistant" ? "model" : "user",
@@ -393,7 +420,7 @@ Deno.serve(async (req) => {
     } catch (e) {
       const err = e as Error;
       if (err.message === "MISSING_API_KEY") {
-        console.error("GEMINI_API_KEY secret set nahi hai");
+        console.error("GEMINI_API_KEY secret is not set");
         return fail(500, "AI_NOT_CONFIGURED", "AI service is not configured.");
       }
       if (err.name === "AbortError") return fail(504, "AI_TIMEOUT", "The AI took too long. Please try again.");
@@ -450,7 +477,7 @@ Deno.serve(async (req) => {
             return;
           }
           if (finishReason === "MAX_TOKENS") {
-            console.warn("Reply MAX_TOKENS par kat gaya, MAX_OUTPUT_TOKENS badhane par vichar karein");
+            console.warn("Reply was cut off at MAX_TOKENS; consider raising MAX_OUTPUT_TOKENS");
           }
           if (!convoId) {
             const { data: created, error: cErr } = await admin.from("conversations").insert({
