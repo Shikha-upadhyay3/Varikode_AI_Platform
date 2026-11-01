@@ -10,6 +10,7 @@ const HUMAN_ACTIVE_MINUTES = 15;
 const FREE_MONTHLY_MESSAGES = Number(Deno.env.get("FREE_MONTHLY_MESSAGES") ?? "50");
 
 const MODEL = Deno.env.get("GEMINI_MODEL") ?? "gemini-3.6-flash";
+const THINKING_LEVEL = Deno.env.get("GEMINI_THINKING_LEVEL") ?? "";
 
 const GEMINI_TOTAL_TIMEOUT_MS = 25_000;
 
@@ -78,7 +79,10 @@ async function callGemini(contents: unknown[], systemPrompt: string | null): Pro
   const payload = JSON.stringify({
     ...(systemPrompt ? { systemInstruction: { parts: [{ text: systemPrompt }] } } : {}),
     contents,
-    generationConfig: { maxOutputTokens: MAX_OUTPUT_TOKENS },
+    generationConfig: {
+      maxOutputTokens: MAX_OUTPUT_TOKENS,
+      ...(THINKING_LEVEL ? { thinkingConfig: { thinkingLevel: THINKING_LEVEL } } : {}),
+    },
   });
 
   const deadline = Date.now() + GEMINI_TOTAL_TIMEOUT_MS;
@@ -445,6 +449,7 @@ Deno.serve(async (req) => {
         let full = "";
         let pt = 0;
         let ct = 0;
+        let th = 0; // thinking tokens (Google bills them as output)
         let finishReason = "";
         try {
           const reader = geminiBody.getReader();
@@ -468,9 +473,11 @@ Deno.serve(async (req) => {
               if (chunk.usageMetadata) {
                 pt = chunk.usageMetadata.promptTokenCount ?? pt;
                 ct = chunk.usageMetadata.candidatesTokenCount ?? ct;
+                th = chunk.usageMetadata.thoughtsTokenCount ?? th;
               }
             }
           }
+          console.log(`Gemini usage: prompt ${pt}, output ${ct}, thinking ${th}`);
           if (!full) {
             console.error("Empty reply. finishReason:", finishReason);
             send({ type: "error", code: "EMPTY_AI_RESPONSE", message: "The AI returned an empty response. Please try again." });
@@ -492,10 +499,10 @@ Deno.serve(async (req) => {
           const { error: mErr } = await admin.from("messages").insert([
             { conversation_id: convoId, role: "user", content: message, created_at: new Date(now).toISOString() },
             { conversation_id: convoId, role: "assistant", content: full, prompt_tokens: pt,
-              completion_tokens: ct, created_at: new Date(now + 1).toISOString() },
+              completion_tokens: ct + th, created_at: new Date(now + 1).toISOString() },
           ]);
           if (mErr) throw mErr;
-          await admin.rpc("record_visitor_usage", { p_bot: bot.id, p_visitor: visitorId, p_tokens: pt + ct });
+          await admin.rpc("record_visitor_usage", { p_bot: bot.id, p_visitor: visitorId, p_tokens: pt + ct + th });
           await admin.from("conversations").update({ updated_at: new Date().toISOString() }).eq("id", convoId);
           send({ type: "done", conversationId: convoId });
         } catch (e) {

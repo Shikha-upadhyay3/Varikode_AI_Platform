@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import "./App.css";
 import "./theme.css";
-import ChatWidget from "./ChatWidget";
+
 import { useAuth } from "./AuthContext";
 import { supabase } from "./lib/supabaseClient";
 import KnowledgeSources from "./KnowledgeSources";
@@ -481,9 +481,9 @@ function Sidebar({ active, setActive, open, close }) {
 
   const roleLabel = role ? role.charAt(0).toUpperCase() + role.slice(1) : "";
     const { stats: sidebarStats } = useOverviewStats(organization?.id, 30);
-  const currentPlan = getPlan(organization?.plan ?? "free");
+  const currentPlan = getPlan(organization?.plan);
   const usedMessages = sidebarStats?.month_messages ?? 0;
-  const resetsOn = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 1);
+  const resetsOn = organization?.subscription_end_date ?? null;
   const sourcesCount = sidebarStats?.knowledge_sources?.total ?? 0;
 
   const links = [
@@ -563,9 +563,9 @@ function Sidebar({ active, setActive, open, close }) {
 
         <div className="sidebar-bottom"> 
           <UsageCard
-            planName={currentPlan.name}
+            planName={currentPlan?.name}
             used={usedMessages}
-            limit={currentPlan.messages ?? 0}
+            limit={currentPlan?.messages}
             resetsOn={resetsOn}
             onUpgrade={() => {
               setActive("Pricing");
@@ -2028,17 +2028,42 @@ function MobileTabs({ active, setActive }) {
     </>
   );
 }
+
 function LeadsPage() {
   const { organization, role } = useWorkspaceMembership();
   return <Leads topbar={<Topbar title="Leads" />} organization={organization} role={role} />;
 }
 
+function ContactFab({ onClick }) {
+  return (
+    <button type="button" className="contact-fab" onClick={onClick}>
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+        strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <rect x="3" y="5" width="18" height="14" rx="2" />
+        <path d="m3 7 9 6 9-6" />
+      </svg>
+      Contact us
+    </button>
+  );
+}
+
+
 export default function App() {
   const { organization } = useWorkspaceMembership();
   const { chats, loading: loadingChats, error: chatsError, reload: reloadChats } = useChats(organization?.id);
+    const { user } = useAuth();
+  const { stats: pricingStats } = useOverviewStats(organization?.id, 30);
+
+  const contactSales = async ({ name, email, phone, message }) => {
+    const { error } = await supabase.functions.invoke("contact-sales", {
+      body: { name, email, phone, message, organizationName: organization?.name ?? "" },
+    });
+    if (error) throw error;
+  };
   const [active, setActive] = useState("Overview");
   const [menuOpen, setMenuOpen] = useState(false);
   const [assistant, setAssistant] = useState(loadAssistant);
+  const [contactRequested, setContactRequested] = useState(false);
  // const [chats, setChats] = useState(loadChats);
 
   // Delete a conversation from Supabase, then reload the chat list
@@ -2070,7 +2095,7 @@ export default function App() {
                         {active !== "Pricing" && (
           <CreditsBanner
             organizationId={organization?.id}
-            limit={getPlan(organization?.plan ?? "free").messages ?? 0}
+            limit={getPlan(organization?.plan ?? "free")?.messages ?? 0}
             onUpgrade={() => setActive("Pricing")}
           />
         )}
@@ -2083,13 +2108,28 @@ export default function App() {
         {active === "Pricing" && (
           <>
             <Topbar title="Pricing" />
-            <PricingPage currentPlanId={organization?.plan ?? "free"} currency="INR" />
+            <PricingPage
+              currentPlanId={organization?.plan ?? null}
+              usedMessages={pricingStats ? pricingStats.month_messages ?? 0 : null}
+              defaultName={user?.user_metadata?.full_name ?? ""}
+              defaultEmail={user?.email ?? ""}
+              onContactSales={contactSales}
+              openContact={contactRequested}
+              onContactHandled={() => setContactRequested(false)}
+            />
           </>
         )}
         {active !== "Chatbots" && active !== "Knowledge sources" && active !== "Chats" && active !== "Leads" && active !== "Assistant settings" && active !== "Pricing" && <Overview active={active} setActive={setActive} />}
       
       </div>
-        <ChatWidget organizationId={organization?.id} assistant={assistant} onMessageSaved={reloadChats} />
+       {active !== "Pricing" && (
+  <ContactFab
+    onClick={() => {
+      setContactRequested(true);
+      setActive("Pricing");
+    }}
+  />
+)}
     </div>
   );
 }

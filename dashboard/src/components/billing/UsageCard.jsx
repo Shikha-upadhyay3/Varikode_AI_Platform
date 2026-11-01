@@ -1,16 +1,16 @@
 import "./billing.css";
 
-// Sidebar "Monthly usage" card.
+// Sidebar "Monthly usage" card. Shows only what is known.
 //
-// Props (all come from your database, nothing is hardcoded):
-//   planName   "Free" | "Starter" | ...
-//   used       messages used this billing period
-//   limit      messages allowed on the plan
-//   resetsOn   Date or ISO string, when usage resets
-//   onUpgrade  click handler (e.g. () => navigate("/pricing"))
+// Props:
+//   used       messages used this month (from the database)
+//   planName   optional. Hidden when the plan is not known yet
+//   limit      optional. When missing, only the used count is shown
+//   resetsOn   optional Date/ISO string. Hidden when not known
+//   onUpgrade  click handler
 //   href       optional, renders a link instead of a button
 
-const fmt = (n) => Number(n || 0).toLocaleString("en-IN");
+const fmt = (v) => Number(v || 0).toLocaleString("en-IN");
 
 function ArrowIcon() {
   return (
@@ -20,11 +20,12 @@ function ArrowIcon() {
   );
 }
 
-export default function UsageCard({ planName = "Free", used = 0, limit = 0, resetsOn, onUpgrade, href }) {
-  const ratio = limit > 0 ? used / limit : 0;
+export default function UsageCard({ planName, used = 0, limit, resetsOn, onUpgrade, href }) {
+  const hasLimit = Number(limit) > 0;
+  const ratio = hasLimit ? used / limit : 0;
   const pct = Math.min(100, Math.round(ratio * 100));
-  const barWidth = used > 0 ? Math.max(pct, 2) : 0; // keep tiny usage visible
-  const state = ratio >= 1 ? "full" : ratio >= 0.8 ? "warn" : "ok";
+  const barWidth = used > 0 ? Math.max(pct, 2) : 0;
+  const state = !hasLimit ? "ok" : ratio >= 1 ? "full" : ratio >= 0.8 ? "warn" : "ok";
 
   const resetLabel = resetsOn
     ? new Date(resetsOn).toLocaleDateString("en-IN", { day: "numeric", month: "short" })
@@ -47,24 +48,26 @@ export default function UsageCard({ planName = "Free", used = 0, limit = 0, rese
     <div className="vk-usage" data-state={state}>
       <div className="vk-usage__head">
         <span>Monthly usage</span>
-        <span className="vk-usage__pct">{pct}%</span>
+        {hasLimit && <span className="vk-usage__pct">{pct}%</span>}
       </div>
-      <div className="vk-usage__plan">{planName} plan</div>
+      {planName && <div className="vk-usage__plan">{planName} plan</div>}
 
-      <div
-        className="vk-usage__bar"
-        role="progressbar"
-        aria-label="Messages used this month"
-        aria-valuemin={0}
-        aria-valuemax={limit}
-        aria-valuenow={Math.min(used, limit)}
-      >
-        <span style={{ width: `${barWidth}%` }} />
-      </div>
+      {hasLimit && (
+        <div
+          className="vk-usage__bar"
+          role="progressbar"
+          aria-label="Messages used this month"
+          aria-valuemin={0}
+          aria-valuemax={limit}
+          aria-valuenow={Math.min(used, limit)}
+        >
+          <span style={{ width: `${barWidth}%` }} />
+        </div>
+      )}
 
-      <div className="vk-usage__nums">
+      <div className="vk-usage__nums" style={hasLimit ? undefined : { marginTop: 10 }}>
         <strong>{fmt(used)}</strong>
-        <span>of {fmt(limit)} messages</span>
+        <span>{hasLimit ? `of ${fmt(limit)} messages` : "messages this month"}</span>
       </div>
 
       {resetLabel && <div className="vk-usage__reset">Resets on {resetLabel}</div>}
