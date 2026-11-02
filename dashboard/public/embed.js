@@ -79,13 +79,13 @@
     }
     whenBodyReady(function () { mount(cfg); });
   });
-
+      
   // ---------------------------------------------------------------------------
   // 4. BUILD THE WIDGET
   // ---------------------------------------------------------------------------
   function mount(cfg) {
     var title = titleAttr || cfg.name || "Chat with us";
-    var color = colorAttr || THEMES[cfg.theme] || (/^#[0-9a-f]{6}$/i.test(cfg.theme || "") ? cfg.theme : "#1e90ff");
+    var color = colorAttr || THEMES[cfg.theme] || (/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(cfg.theme || "") ? cfg.theme : "#1e90ff");
     var welcome = cfg.welcomeMessage || "Hi! How can I help you today?";
     var logoUrl = typeof cfg.logoUrl === "string" && /^https:\/\//i.test(cfg.logoUrl) ? cfg.logoUrl : "";
     var askLead = cfg.collectLeads === true && !state.leadDone;
@@ -109,8 +109,11 @@
       '.box.open{display:flex}' +
       '.head{background:' + color + ';color:#fff;padding:12px 16px;font-weight:600;display:flex;align-items:center;gap:10px}' +
       '.head img{width:28px;height:28px;border-radius:50%;object-fit:cover;background:#fff;flex:0 0 auto}' +
+      '.x{margin-left:auto;width:28px;height:28px;border:0;border-radius:50%;background:rgba(255,255,255,.22);color:#fff;font-size:20px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}' +
+      '.x:hover{background:rgba(255,255,255,.35)}' +
       '.msgs{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:8px;background:#f8fafc}' +
       '.m{max-width:80%;padding:8px 12px;border-radius:12px;font-size:14px;line-height:1.4;white-space:pre-wrap;word-wrap:break-word}' +
+            '.m a{color:inherit;text-decoration:underline;word-break:break-all}' +
       '.u{align-self:flex-end;background:' + color + ';color:#fff}' +
       '.a{align-self:flex-start;background:#e2e8f0;color:#0f172a}' +
       '.agent{border-left:3px solid ' + color + '}' +
@@ -182,11 +185,38 @@
     ttl.textContent = title; // textContent is XSS-safe
     head.appendChild(ttl);
 
+    // Cross (close) button in the header
+    var closeBtn = document.createElement("button");
+    closeBtn.className = "x";
+    closeBtn.setAttribute("aria-label", "Close chat");
+    closeBtn.textContent = "×";
+    closeBtn.onclick = function () { box.classList.remove("open"); };
+    head.appendChild(closeBtn);
+        var URL_RE = /https?:\/\/[^\s<>"')\]]+/g;
+    function renderText(el, text) {
+      el.textContent = "";
+      var last = 0, m;
+      URL_RE.lastIndex = 0;
+      while ((m = URL_RE.exec(text)) !== null) {
+        var url = m[0].replace(/[.,;:!?]+$/, "");
+        if (m.index > last) el.appendChild(document.createTextNode(text.slice(last, m.index)));
+        var a = document.createElement("a");
+        a.href = url;
+        a.target = "_blank";
+        a.rel = "noopener noreferrer";
+        a.textContent = url;
+        el.appendChild(a);
+        last = m.index + url.length;
+        URL_RE.lastIndex = last;
+      }
+      if (last < text.length) el.appendChild(document.createTextNode(text.slice(last)));
+    }
+
     function scrollDown() { msgs.scrollTop = msgs.scrollHeight; }
     function add(text, cls) {
       var d = document.createElement("div");
       d.className = "m " + cls;
-      d.textContent = text; // textContent is XSS-safe
+      renderText(d, text); // safe: only text nodes and http(s) links
       msgs.appendChild(d);
       scrollDown();
       return d;
@@ -354,6 +384,7 @@
       var bot = add("", "a");
       bot.innerHTML = '<span class="dot"></span><span class="dot"></span><span class="dot"></span>';
       var got = false;
+      var acc = "";
       var finished = false;
       var handoff = false;
 
@@ -364,8 +395,9 @@
         var evt;
         try { evt = JSON.parse(line.slice(5)); } catch (e) { return; }
         if (evt.type === "delta") {
-          if (!got) { bot.textContent = ""; got = true; }
-          bot.textContent += evt.text;
+          got = true;
+          acc += evt.text;
+          renderText(bot, acc);
           scrollDown();
         } else if (evt.type === "done") {
           state.conversationId = evt.conversationId; save();
