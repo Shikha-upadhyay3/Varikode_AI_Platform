@@ -133,7 +133,7 @@ function ContactWidget({ open, setOpen, defaultName, defaultEmail, onSubmit }) {
                 id="vk-cw-phone"
                 type="tel"
                 required
-                pattern="[0-9+()\-\s]{7,20}"
+                pattern="[0-9+() \-]{7,20}"
                 title="Digits, spaces, + ( ) and - only (7 to 20 characters)"
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}

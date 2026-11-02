@@ -404,6 +404,136 @@ function LogoImage({ fallback = null }) {
     />
   );
 }
+
+/* ------------------------------------------------------------------ */
+/* Workspace logo (each company can upload its own)                    */
+/* ------------------------------------------------------------------ */
+const ORG_LOGO_BUCKET = "org-logos";
+
+function orgLogoPathFromUrl(url) {
+  const marker = `/${ORG_LOGO_BUCKET}/`;
+  const i = url ? url.indexOf(marker) : -1;
+  return i === -1 ? null : decodeURIComponent(url.slice(i + marker.length).split("?")[0]);
+}
+
+function WorkspaceModal({ organization, logoUrl, onClose, onSaved }) {
+  const [file, setFile] = useState(null);
+  const [preview, setPreview] = useState(logoUrl || "");
+  const [removeLogo, setRemoveLogo] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+
+  useEffect(() => {
+    const onKey = (e) => e.key === "Escape" && onClose();
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  function handlePick(event) {
+    const picked = event.target.files?.[0];
+    event.target.value = "";
+    if (!picked) return;
+    if (!["image/png", "image/jpeg", "image/webp"].includes(picked.type)) {
+      setError("Logo must be a PNG, JPG or WebP image.");
+      return;
+    }
+    if (picked.size > 1024 * 1024) {
+      setError("Logo must be smaller than 1 MB.");
+      return;
+    }
+    setError("");
+    setNotice("");
+    setFile(picked);
+    setRemoveLogo(false);
+    setPreview(URL.createObjectURL(picked));
+  }
+
+  function clearLogo() {
+    setFile(null);
+    setPreview("");
+    setRemoveLogo(true);
+    setNotice("");
+  }
+
+  async function handleSave(event) {
+    event.preventDefault();
+    setError("");
+    setNotice("");
+    if (!file && !removeLogo) {
+      setNotice("No changes to save.");
+      return;
+    }
+
+    setSaving(true);
+    try {
+      let nextUrl = null;
+      if (file) {
+        const ext = file.type === "image/png" ? "png" : file.type === "image/webp" ? "webp" : "jpg";
+        const path = `${organization.id}/logo-${Date.now()}.${ext}`;
+        const { error: uploadError } = await supabase.storage
+          .from(ORG_LOGO_BUCKET)
+          .upload(path, file, { contentType: file.type, upsert: false, cacheControl: "3600" });
+        if (uploadError) throw uploadError;
+        nextUrl = supabase.storage.from(ORG_LOGO_BUCKET).getPublicUrl(path).data.publicUrl;
+      }
+
+      const { data, error: saveError } = await supabase
+        .from("organizations")
+        .update({ logo_url: nextUrl })
+        .eq("id", organization.id)
+        .select("logo_url")
+        .single();
+      if (saveError) throw saveError;
+
+      const oldPath = orgLogoPathFromUrl(logoUrl);
+      if (oldPath) await supabase.storage.from(ORG_LOGO_BUCKET).remove([oldPath]);
+
+      onSaved(data.logo_url || "");
+      onClose();
+    } catch (err) {
+      setError((err.message || "Could not save the logo.") + " (Make sure the SQL setup was run in Supabase.)");
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <form className="chatbot-modal panel" onSubmit={handleSave} role="dialog" aria-modal="true" aria-labelledby="workspace-title">
+        <div className="modal-head">
+          <div>
+            <div className="eyebrow">WORKSPACE</div>
+            <h2 id="workspace-title">{organization.name}</h2>
+          </div>
+          <button type="button" className="icon-button" onClick={onClose} aria-label="Close dialog">×</button>
+        </div>
+
+        <label className="field-label" htmlFor="workspace-logo">Workspace logo</label>
+        <div className="logo-picker">
+          <span className="logo-preview">
+            {preview ? <img src={preview} alt="" /> : <span>{organization.name[0].toUpperCase()}</span>}
+          </span>
+          <div>
+            <input id="workspace-logo" type="file" accept="image/png,image/jpeg,image/webp" onChange={handlePick} />
+            {preview && (
+              <button type="button" className="subtle-button" onClick={clearLogo}>Remove logo</button>
+            )}
+            <small>PNG, JPG or WebP, up to 1 MB. Shown in the sidebar for your workspace.</small>
+          </div>
+        </div>
+
+        {error && <p className="modal-error" role="alert">{error}</p>}
+        {notice && <p className="notice success" role="status">{notice}</p>}
+
+        <div className="modal-actions">
+          <button type="button" className="subtle-button" onClick={onClose} disabled={saving}>Cancel</button>
+          <button type="submit" className="primary-button" disabled={saving}>{saving ? "Saving..." : "Save logo"}</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 /* ------------------------------------------------------------------ */
 /* Sidebar                                                             */
 /* ------------------------------------------------------------------ */
@@ -480,20 +610,39 @@ function Sidebar({ active, setActive, open, close }) {
   }
 
   const roleLabel = role ? role.charAt(0).toUpperCase() + role.slice(1) : "";
-    const { stats: sidebarStats } = useOverviewStats(organization?.id, 30);
+  const { stats: sidebarStats } = useOverviewStats(organization?.id, 30);
   const currentPlan = getPlan(organization?.plan);
   const usedMessages = sidebarStats?.month_messages ?? 0;
   const resetsOn = organization?.subscription_end_date ?? null;
   const sourcesCount = sidebarStats?.knowledge_sources?.total ?? 0;
+
+  // Workspace logo (each company's own logo, owner/admin can change it)
+  const canEditWorkspace = role === "owner" || role === "admin";
+  const [orgLogo, setOrgLogo] = useState("");
+  const [workspaceOpen, setWorkspaceOpen] = useState(false);
+
+  useEffect(() => {
+    if (!organization?.id) return;
+    let cancelled = false;
+    supabase
+      .from("organizations")
+      .select("logo_url")
+      .eq("id", organization.id)
+      .maybeSingle()
+      .then(({ data, error }) => {
+        if (!cancelled && !error) setOrgLogo(data?.logo_url || "");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [organization?.id]);
 
   const links = [
     { id: "Overview", icon: "grid" },
     { id: "Chatbots", icon: "bot" },
     { id: "Knowledge sources", icon: "book" },
     { id: "Embed center", icon: "code" },
-    { id: "Assistant settings", icon: "sliders" },
-    { id: "Chats", icon: "chat" },
-    { id: "Leads", icon: "chat" },
+    { id: "Leads", label: "Chat list", icon: "chat" },
   ];
 
   return (
@@ -513,9 +662,30 @@ function Sidebar({ active, setActive, open, close }) {
           <div className="workspace-card workspace-skeleton" aria-hidden="true" />
         ) : organization ? (
           <>
-            <div className="workspace-card">
-              <div className="workspace-avatar" style={{ background: "#fff", overflow: "hidden", padding: 2 }}>
-                <LogoImage fallback={organization.name[0].toUpperCase()} />
+            <div
+              className="workspace-card"
+              role={canEditWorkspace ? "button" : undefined}
+              tabIndex={canEditWorkspace ? 0 : undefined}
+              style={canEditWorkspace ? { cursor: "pointer" } : undefined}
+              title={canEditWorkspace ? "Click to change the workspace logo" : undefined}
+              onClick={() => canEditWorkspace && setWorkspaceOpen(true)}
+              onKeyDown={(e) => {
+                if (canEditWorkspace && (e.key === "Enter" || e.key === " ")) setWorkspaceOpen(true);
+              }}
+            >
+              <div
+                className="workspace-avatar"
+                style={{ overflow: "hidden", padding: orgLogo ? 2 : 0, background: orgLogo ? "#fff" : undefined }}
+              >
+                {orgLogo ? (
+                  <img
+                    src={orgLogo}
+                    alt=""
+                    style={{ width: "100%", height: "100%", objectFit: "contain", display: "block", borderRadius: "inherit" }}
+                  />
+                ) : (
+                  organization.name[0].toUpperCase()
+                )}
               </div>
               <div className="workspace-copy">
                 <strong>{organization.name}</strong>
@@ -555,13 +725,13 @@ function Sidebar({ active, setActive, open, close }) {
               }}
             >
               <Icon name={link.icon} />
-              <span>{link.id}</span>
+              <span>{link.label ?? link.id}</span>
               {link.id === "Knowledge sources" && <span className="nav-count">{sourcesCount}</span>}
             </button>
           ))}
         </nav>
 
-        <div className="sidebar-bottom"> 
+        <div className="sidebar-bottom">
           <UsageCard
             planName={currentPlan?.name}
             used={usedMessages}
@@ -610,6 +780,15 @@ function Sidebar({ active, setActive, open, close }) {
           </div>
         </div>
       </aside>
+
+      {workspaceOpen && organization && (
+        <WorkspaceModal
+          organization={organization}
+          logoUrl={orgLogo}
+          onClose={() => setWorkspaceOpen(false)}
+          onSaved={(url) => setOrgLogo(url)}
+        />
+      )}
     </>
   );
 }
@@ -617,19 +796,208 @@ function Sidebar({ active, setActive, open, close }) {
 /* ------------------------------------------------------------------ */
 /* Topbar                                       */
 /* ------------------------------------------------------------------ */
+const HELP_CENTER_URL = "https://www.varikode.com/contact-ecommerce-development";
+
+// Navigate to a dashboard page from anywhere (App listens for this event)
+const goTo = (page) => window.dispatchEvent(new CustomEvent("vk-nav", { detail: page }));
+
+const SEARCH_ITEMS = [
+  { label: "Overview", hint: "Dashboard and statistics", page: "Overview" },
+  { label: "Chatbots", hint: "Create and manage your chatbot", page: "Chatbots" },
+  { label: "Knowledge sources", hint: "Documents and websites", page: "Knowledge sources" },
+  { label: "Embed center", hint: "Get the website embed code", page: "Embed center" },
+  { label: "Chat list", hint: "Visitor chats and leads", page: "Leads" },
+  { label: "Pricing and plans", hint: "Upgrade your plan", page: "Pricing" },
+  { label: "Help center", hint: "Open the Varikode website", url: HELP_CENTER_URL },
+];
+
+function SearchModal({ onClose }) {
+  const [query, setQuery] = useState("");
+  const q = query.trim().toLowerCase();
+  const results = SEARCH_ITEMS.filter(
+    (item) => !q || item.label.toLowerCase().includes(q) || item.hint.toLowerCase().includes(q)
+  );
+
+  useEffect(() => {
+    const onKey = (e) => e.key === "Escape" && onClose();
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  function open(item) {
+    if (item.url) window.open(item.url, "_blank", "noopener,noreferrer");
+    else goTo(item.page);
+    onClose();
+  }
+
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="chatbot-modal panel" role="dialog" aria-modal="true" aria-label="Search">
+        <div className="modal-head">
+          <div>
+            <div className="eyebrow">SEARCH</div>
+            <h2>Find a page</h2>
+          </div>
+          <button type="button" className="icon-button" onClick={onClose} aria-label="Close dialog">×</button>
+        </div>
+
+        <input
+          className="chatbot-input"
+          autoFocus
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter" && results[0]) open(results[0]); }}
+          placeholder="Type to search, e.g. chatbots, embed, pricing"
+          aria-label="Search"
+        />
+
+        <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
+          {results.length === 0 && <p className="chatbot-help">No results for "{query}".</p>}
+          {results.map((item) => (
+            <button
+              key={item.label}
+              type="button"
+              className="subtle-button"
+              style={{ justifyContent: "space-between", textAlign: "left", width: "100%" }}
+              onClick={() => open(item)}
+            >
+              <span><strong>{item.label}</strong></span>
+              <span style={{ opacity: 0.6, fontSize: 12 }}>{item.hint}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ProfileModal({ onClose }) {
+  const { user } = useAuth();
+  const savedName = user?.user_metadata?.full_name ?? "";
+  const [name, setName] = useState(savedName);
+  const [email, setEmail] = useState(user?.email ?? "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+
+  useEffect(() => {
+    const onKey = (e) => e.key === "Escape" && onClose();
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  async function handleSave(event) {
+    event.preventDefault();
+    setError("");
+    setNotice("");
+
+    const newName = name.trim();
+    const newEmail = email.trim();
+    if (!newName) {
+      setError("Name is required.");
+      return;
+    }
+
+    const emailChanged = newEmail.toLowerCase() !== (user?.email ?? "").toLowerCase();
+    const nameChanged = newName !== savedName;
+    if (!emailChanged && !nameChanged) {
+      setNotice("No changes to save.");
+      return;
+    }
+
+    const updates = {};
+    if (nameChanged) updates.data = { full_name: newName };
+    if (emailChanged) updates.email = newEmail;
+
+    setSaving(true);
+    const { error: updateError } = await supabase.auth.updateUser(updates);
+    if (!updateError) await supabase.auth.refreshSession();
+    setSaving(false);
+
+    if (updateError) {
+      setError(updateError.message);
+      return;
+    }
+    setNotice(
+      emailChanged
+        ? `Saved. We sent a confirmation link to ${newEmail}. Your email changes after you open that link.`
+        : "Profile saved."
+    );
+  }
+
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <form className="chatbot-modal panel" onSubmit={handleSave} role="dialog" aria-modal="true" aria-labelledby="profile-title">
+        <div className="modal-head">
+          <div>
+            <div className="eyebrow">YOUR ACCOUNT</div>
+            <h2 id="profile-title">Edit profile</h2>
+          </div>
+          <button type="button" className="icon-button" onClick={onClose} aria-label="Close dialog">×</button>
+        </div>
+
+        <label className="field-label" htmlFor="profile-name">Name</label>
+        <input id="profile-name" className="chatbot-input" value={name} onChange={(e) => setName(e.target.value)} maxLength={80} required />
+
+        <label className="field-label" htmlFor="profile-email">Email</label>
+        <input id="profile-email" type="email" className="chatbot-input" value={email} onChange={(e) => setEmail(e.target.value)} required />
+
+        {error && <p className="modal-error" role="alert">{error}</p>}
+        {notice && <p className="notice success" role="status">{notice}</p>}
+
+        <div className="modal-actions">
+          <button type="button" className="subtle-button" onClick={onClose} disabled={saving}>Close</button>
+          <button type="submit" className="primary-button" disabled={saving}>{saving ? "Saving..." : "Save changes"}</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 function Topbar({ title }) {
   const { user } = useAuth();
   const initial = getDisplayName(user)[0].toUpperCase();
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const titlePage = title === "Chat list" ? "Leads" : title;
 
   return (
-    <header className="topbar">
-      <div className="breadcrumbs"><span>Workspace</span><b>/</b><strong>{title}</strong></div>
-      <div className="topbar-actions">
-        <button className="icon-button" aria-label="Search"><Icon name="search" /></button>
-        <button className="help-button">Help center <Icon name="arrow" size={14} /></button>
-        <div className="top-avatar">{initial}</div>
-      </div>
-    </header>
+    <>
+      <header className="topbar">
+        <div className="breadcrumbs">
+          <button type="button" style={{ all: "unset", cursor: "pointer" }} onClick={() => goTo("Overview")}>
+            <span>Workspace</span>
+          </button>
+          <b>/</b>
+          <button type="button" style={{ all: "unset", cursor: "pointer" }} onClick={() => goTo(titlePage)}>
+            <strong>{title}</strong>
+          </button>
+        </div>
+        <div className="topbar-actions">
+          <button className="icon-button" type="button" aria-label="Search" onClick={() => setSearchOpen(true)}>
+            <Icon name="search" />
+          </button>
+          <button
+            className="help-button"
+            type="button"
+            onClick={() => window.open(HELP_CENTER_URL, "_blank", "noopener,noreferrer")}
+          >
+            Help center <Icon name="arrow" size={14} />
+          </button>
+          <button
+            type="button"
+            className="top-avatar"
+            style={{ cursor: "pointer", border: "none" }}
+            onClick={() => setProfileOpen(true)}
+            aria-label="Edit profile"
+          >
+            {initial}
+          </button>
+        </div>
+      </header>
+      {searchOpen && <SearchModal onClose={() => setSearchOpen(false)} />}
+      {profileOpen && <ProfileModal onClose={() => setProfileOpen(false)} />}
+    </>
   );
 }
 
@@ -661,7 +1029,7 @@ function EmbedCenter({ organization }) {
   }
 
   function makeSnippet(bot, publicKey) {
-        // Always use the public (live) dashboard address, even when the code is copied from localhost
+    // Always use the public (live) dashboard address, even when the code is copied from localhost
     const PRODUCTION_APP_URL = "https://varikode-ai-platform-cia6.vercel.app";
     const appBase = ["localhost", "127.0.0.1"].includes(window.location.hostname)
       ? PRODUCTION_APP_URL
@@ -850,7 +1218,7 @@ function AssistantAvatar({ assistant, size = 28 }) {
 
 
 const EMPTY_CHATBOT_FORM = {
-  
+
   name: "",
   description: "",
   welcome_message: "",
@@ -955,22 +1323,22 @@ function ChatbotManagement() {
   });
 
   function openCreateForm() {
-    
-  if (limitReached) {
+
+    if (limitReached) {
+      setSuccess("");
+      setChatbotError("Each workspace can have only one chatbot. Edit or delete the existing chatbot to create a new one.");
+      return;
+    }
+    setChatbotError("");
+    setEditing(null);
+    setForm(EMPTY_CHATBOT_FORM);
+    setLogoFile(null);
+    setLogoPreview("");
+    setRemoveLogo(false);
+    setFormError("");
     setSuccess("");
-    setChatbotError("Each workspace can have only one chatbot. Edit or delete the existing chatbot to create a new one.");
-    return;
+    setFormOpen(true);
   }
-  setChatbotError("");
-  setEditing(null);
-  setForm(EMPTY_CHATBOT_FORM);
-  setLogoFile(null);
-  setLogoPreview("");
-  setRemoveLogo(false);
-  setFormError("");
-  setSuccess("");
-  setFormOpen(true);
-}
 
   function openEditForm(chatbot) {
     setEditing(chatbot);
@@ -1028,26 +1396,26 @@ function ChatbotManagement() {
     }
     // new one chatbot per workspace
     if (!editing) {
-  if (chatbots.length >= MAX_CHATBOTS_PER_ORG) {
-    setFormError("Each workspace can have only one chatbot.");
-    return;
-  }
+      if (chatbots.length >= MAX_CHATBOTS_PER_ORG) {
+        setFormError("Each workspace can have only one chatbot.");
+        return;
+      }
 
-  //  confirm from DB 
-  const { count, error: countError } = await supabase
-    .from("chatbots")
-    .select("id", { count: "exact", head: true })
-    .eq("organization_id", organization.id);
+      //  confirm from DB
+      const { count, error: countError } = await supabase
+        .from("chatbots")
+        .select("id", { count: "exact", head: true })
+        .eq("organization_id", organization.id);
 
-  if (countError) {
-    setFormError(countError.message);
-    return;
-  }
-  if ((count ?? 0) >= MAX_CHATBOTS_PER_ORG) {
-    setFormError("Each workspace can have only one chatbot.");
-    return;
-  }
-}
+      if (countError) {
+        setFormError(countError.message);
+        return;
+      }
+      if ((count ?? 0) >= MAX_CHATBOTS_PER_ORG) {
+        setFormError("Each workspace can have only one chatbot.");
+        return;
+      }
+    }
 
     setSaving(true);
 
@@ -1077,14 +1445,14 @@ function ChatbotManagement() {
           .single();
 
     if (result.error) {
-  setSaving(false);
-  setFormError(
-    result.error.code === "23505"
-      ? "Each workspace can have only one chatbot."
-      : result.error.message
-  );
-  return;
-}
+      setSaving(false);
+      setFormError(
+        result.error.code === "23505"
+          ? "Each workspace can have only one chatbot."
+          : result.error.message
+      );
+      return;
+    }
 
     let savedBot = result.data;
     let logoWarning = "";
@@ -1183,28 +1551,28 @@ function ChatbotManagement() {
             <p className="welcome-subtitle">Create, publish, and manage the assistants available to your workspace.</p>
           </div>
           <button
-  className="primary-button"
-  type="button"
-  onClick={openCreateForm}
-  disabled={!canManage || !organization || loadingChatbots || limitReached}
-  title={limitReached ? "One chatbot per workspace is allowed" : undefined}
->
-  <Icon name="plus" size={16} />
-  Create chatbot
-</button>
-{limitReached && (
-  <p
-    style={{
-      margin: "8px 0 0",
-      fontSize: "10px",
-      color: "#8fa3bf",
-      maxWidth: "260px",
-      lineHeight: 1.4,
-    }}
-  >
-    Your workspace already has a chatbot. Edit or delete it to create a new one.
-  </p>
-)}
+            className="primary-button"
+            type="button"
+            onClick={openCreateForm}
+            disabled={!canManage || !organization || loadingChatbots || limitReached}
+            title={limitReached ? "One chatbot per workspace is allowed" : undefined}
+          >
+            <Icon name="plus" size={16} />
+            Create chatbot
+          </button>
+          {limitReached && (
+            <p
+              style={{
+                margin: "8px 0 0",
+                fontSize: "10px",
+                color: "#8fa3bf",
+                maxWidth: "260px",
+                lineHeight: 1.4,
+              }}
+            >
+              Your workspace already has a chatbot. Edit or delete it to create a new one.
+            </p>
+          )}
         </section>
 
         {(organizationError || chatbotError || success || (!loadingOrganization && organization && !canManage)) && (
@@ -1472,7 +1840,7 @@ function ChatHistory({ assistant, chats, onDelete }) {
           <article className="panel" style={{ padding: 40, textAlign: "center" }}>
             <strong style={{ fontSize: 16 }}>No chats yet</strong>
             <p style={{ opacity: 0.6, fontSize: 13, marginTop: 8 }}>
-              Start a conversation with the "Ask AI" button and it will be saved here.
+              Conversations from your website chatbot will appear here.
             </p>
           </article>
         ) : (
@@ -1658,11 +2026,11 @@ function Overview({ active, setActive }) {
   const { user } = useAuth();
   const { organization } = useWorkspaceMembership();
   const firstName = getDisplayName(user).split(/[ @]/)[0];
-    const greeting = getGreeting();
-    const { stats } = useOverviewStats(organization?.id, 30);
+  const greeting = getGreeting();
+  const { stats } = useOverviewStats(organization?.id, 30);
 
   const daily = (stats?.daily ?? []).map((d) => d.count);
-    const areaData = (stats?.daily ?? []).map((d) => ({
+  const areaData = (stats?.daily ?? []).map((d) => ({
     label: new Date(d.day + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" }),
     value: d.count,
   }));
@@ -1673,7 +2041,7 @@ function Overview({ active, setActive }) {
   const sourcesTotal = stats?.knowledge_sources?.total ?? 0;
   const MONTHLY_LIMIT = 10000;
   const monthMessages = stats?.month_messages ?? 0;
-    const resolvedN = stats?.outcomes?.resolved ?? 0;
+  const resolvedN = stats?.outcomes?.resolved ?? 0;
   const handoffN = stats?.outcomes?.handoff ?? 0;
   const outcomeTotal = resolvedN + handoffN;
   const resRate = outcomeTotal ? Math.round((resolvedN / outcomeTotal) * 1000) / 10 : 0;
@@ -1727,25 +2095,25 @@ function Overview({ active, setActive }) {
           <article className="stat-card">
             <div className="stat-top"><span>Total conversations</span><span className="stat-icon violet"><Icon name="bot" size={18} /></span></div>
             <div className="stat-value">{stats ? stats.conversations.current.toLocaleString() : "…"}</div>
-<div className="stat-foot"><span className="trend">{fmtChange(convChange)}</span><span>vs. previous month</span></div>
+            <div className="stat-foot"><span className="trend">{fmtChange(convChange)}</span><span>vs. previous month</span></div>
             <Spark id="conv" color="#3aa0ff" data={sparkOf(daily)} />
           </article>
           <article className="stat-card">
             <div className="stat-top"><span>Messages answered</span><span className="stat-icon mint"><Icon name="send" size={17} /></span></div>
             <div className="stat-value">{stats ? stats.messages_answered.current.toLocaleString() : "…"}</div>
-<div className="stat-foot"><span className="trend">{fmtChange(msgChange)}</span><span>vs. previous month</span></div>
+            <div className="stat-foot"><span className="trend">{fmtChange(msgChange)}</span><span>vs. previous month</span></div>
             <Spark id="conv" color="#3aa0ff" data={sparkOf(daily)} />
           </article>
           <article className="stat-card">
             <div className="stat-top"><span>Knowledge sources</span><span className="stat-icon amber"><Icon name="book" size={17} /></span></div>
             <div className="stat-value">{String(sourcesTotal).padStart(2, "0")}</div>
-<div className="stat-foot"><span className="stat-neutral">+{stats?.knowledge_sources?.added_this_month ?? 0} added</span><span>this month</span></div>
+            <div className="stat-foot"><span className="stat-neutral">+{stats?.knowledge_sources?.added_this_month ?? 0} added</span><span>this month</span></div>
 
           </article>
           <article className="stat-card">
             <div className="stat-top"><span>Resolution rate</span><span className="stat-icon blue"><Icon name="spark" size={18} /></span></div>
             <div className="stat-foot"><span className="trend">{fmtChange(resChange)}</span><span>vs. previous month</span></div>
-<Spark id="res" color="#60a5fa" data={sparkOf((stats?.daily ?? []).map((d) => d.resolved))} />
+            <Spark id="res" color="#60a5fa" data={sparkOf((stats?.daily ?? []).map((d) => d.resolved))} />
 
           </article>
         </section>
@@ -1798,42 +2166,42 @@ function Overview({ active, setActive }) {
           <article className="panel activity-panel">
             <div className="panel-heading compact"><div><div className="panel-title">Recent activity</div><p>What’s happening in your workspace</p></div><button className="dots-button" aria-label="More options">•••</button></div>
             <div className="activity-list">
-  {(stats?.recent_conversations ?? []).map((c) => (
-    <div className="activity-item" key={c.id}>
-      <div className="activity-icon mint"><Icon name="bot" size={16} /></div>
-      <div>
-        <strong>New conversation</strong>
-        <p>“{c.title}”</p>
-        <small>{new Date(c.created_at).toLocaleString()}</small>
-      </div>
-    </div>
-  ))}
-  {(stats?.recent_sources ?? []).slice(0, 2).map((s) => (
-    <div className="activity-item" key={s.id}>
-      <div className="activity-icon violet"><Icon name="file" size={16} /></div>
-      <div>
-        <strong>Knowledge source added</strong>
-        <p>{s.title}</p>
-        <small>{new Date(s.created_at).toLocaleString()}</small>
-      </div>
-    </div>
-  ))}
-  {stats && !stats.recent_conversations?.length && !stats.recent_sources?.length && (
-    <div className="activity-item">
-      <div>
-        <strong>No activity yet</strong>
-        <p>Chats and new sources will appear here.</p>
-      </div>
-    </div>
-  )}
-</div>
+              {(stats?.recent_conversations ?? []).map((c) => (
+                <div className="activity-item" key={c.id}>
+                  <div className="activity-icon mint"><Icon name="bot" size={16} /></div>
+                  <div>
+                    <strong>New conversation</strong>
+                    <p>“{c.title}”</p>
+                    <small>{new Date(c.created_at).toLocaleString()}</small>
+                  </div>
+                </div>
+              ))}
+              {(stats?.recent_sources ?? []).slice(0, 2).map((s) => (
+                <div className="activity-item" key={s.id}>
+                  <div className="activity-icon violet"><Icon name="file" size={16} /></div>
+                  <div>
+                    <strong>Knowledge source added</strong>
+                    <p>{s.title}</p>
+                    <small>{new Date(s.created_at).toLocaleString()}</small>
+                  </div>
+                </div>
+              ))}
+              {stats && !stats.recent_conversations?.length && !stats.recent_sources?.length && (
+                <div className="activity-item">
+                  <div>
+                    <strong>No activity yet</strong>
+                    <p>Chats and new sources will appear here.</p>
+                  </div>
+                </div>
+              )}
+            </div>
           </article>
 
           <article className="panel sources-panel">
             <div className="panel-heading compact"><div><div className="panel-title">Your knowledge base</div><p>Content powering your assistant</p></div><button className="small-add" aria-label="Add knowledge source" onClick={() => setActive("Knowledge sources")}><Icon name="plus" size={17} /></button></div>
             <div className="chart-body" style={{ display: "flex", alignItems: "center", gap: 18, paddingBottom: 8 }}>
               <Donut total={sourcesTotal || 1} parts={[{ label: "Sources", value: sourcesTotal, color: "#1e90ff" }]} />
-              
+
               <div style={{ display: "grid", gap: 10, fontSize: 12, flex: 1 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}><i style={{ width: 8, height: 8, borderRadius: 2, background: "#1e90ff", display: "inline-block" }} /> Sources <strong style={{ marginLeft: "auto" }}>{sourcesTotal}</strong></div>
               </div>
@@ -1964,9 +2332,7 @@ const MOBILE_LINKS = [
   { id: "Chatbots", icon: "bot" },
   { id: "Knowledge sources", icon: "book" },
   { id: "Embed center", icon: "code" },
-  { id: "Assistant settings", icon: "sliders" },
-  { id: "Chats", icon: "chat" },
-  { id: "Leads", icon: "chat" },
+  { id: "Leads", label: "Chat list", icon: "chat" },
 ];
 
 const mobileTabsCss = `
@@ -2021,7 +2387,7 @@ function MobileTabs({ active, setActive }) {
             onClick={() => setActive(link.id)}
           >
             <Icon name={link.icon} size={15} />
-            {link.id}
+            {link.label ?? link.id}
           </button>
         ))}
       </nav>
@@ -2031,7 +2397,7 @@ function MobileTabs({ active, setActive }) {
 
 function LeadsPage() {
   const { organization, role } = useWorkspaceMembership();
-  return <Leads topbar={<Topbar title="Leads" />} organization={organization} role={role} />;
+  return <Leads topbar={<Topbar title="Chat list" />} organization={organization} role={role} />;
 }
 
 function ContactFab({ onClick }) {
@@ -2051,20 +2417,36 @@ function ContactFab({ onClick }) {
 export default function App() {
   const { organization } = useWorkspaceMembership();
   const { chats, loading: loadingChats, error: chatsError, reload: reloadChats } = useChats(organization?.id);
-    const { user } = useAuth();
+  const { user } = useAuth();
   const { stats: pricingStats } = useOverviewStats(organization?.id, 30);
 
   const contactSales = async ({ name, email, phone, message }) => {
-    const { error } = await supabase.functions.invoke("contact-sales", {
-      body: { name, email, phone, message, organizationName: organization?.name ?? "" },
-    });
-    if (error) throw error;
-  };
+  const { error } = await supabase.functions.invoke("smooth-task", {
+    body: { name, email, phone, message, organizationName: organization?.name ?? "" },
+  });
+  if (error) {
+    let detail = error.message;
+    try {
+      detail = JSON.stringify(await error.context.json());
+    } catch {
+      // response was not JSON
+    }
+    console.error("smooth-task replied:", detail);
+    throw new Error(detail);
+  }
+};
   const [active, setActive] = useState("Overview");
   const [menuOpen, setMenuOpen] = useState(false);
   const [assistant, setAssistant] = useState(loadAssistant);
   const [contactRequested, setContactRequested] = useState(false);
- // const [chats, setChats] = useState(loadChats);
+  // const [chats, setChats] = useState(loadChats);
+
+  // Lets the Topbar (breadcrumb, search) switch pages
+  useEffect(() => {
+    const onNav = (e) => setActive(e.detail);
+    window.addEventListener("vk-nav", onNav);
+    return () => window.removeEventListener("vk-nav", onNav);
+  }, []);
 
   // Delete a conversation from Supabase, then reload the chat list
   const deleteChat = async (id) => {
@@ -2081,7 +2463,7 @@ export default function App() {
     try {
       localStorage.setItem("assistant", JSON.stringify(data));
     } catch {
-   // Storage full or blocked: The state will still be updated
+      // Storage full or blocked: The state will still be updated
     }
   };
 
@@ -2090,9 +2472,9 @@ export default function App() {
       <Sidebar active={active} setActive={setActive} open={menuOpen} close={() => setMenuOpen(false)} />
       <div className="main-shell">
         <button className="mobile-menu" onClick={() => setMenuOpen(true)} aria-label="Open menu"><Icon name="menu" /></button>
-                <MobileTabs active={active} setActive={setActive} />
+        <MobileTabs active={active} setActive={setActive} />
 
-                        {active !== "Pricing" && (
+        {active !== "Pricing" && (
           <CreditsBanner
             organizationId={organization?.id}
             limit={getPlan(organization?.plan ?? "free")?.messages ?? 0}
@@ -2120,16 +2502,16 @@ export default function App() {
           </>
         )}
         {active !== "Chatbots" && active !== "Knowledge sources" && active !== "Chats" && active !== "Leads" && active !== "Assistant settings" && active !== "Pricing" && <Overview active={active} setActive={setActive} />}
-      
+
       </div>
-       {active !== "Pricing" && (
-  <ContactFab
-    onClick={() => {
-      setContactRequested(true);
-      setActive("Pricing");
-    }}
-  />
-)}
+      {active !== "Pricing" && (
+        <ContactFab
+          onClick={() => {
+            setContactRequested(true);
+            setActive("Pricing");
+          }}
+        />
+      )}
     </div>
   );
 }
