@@ -183,8 +183,8 @@ export default function AuthPage() {
       </svg>
 
       {/* =====================================================
-          LEFT SIDE: brand message, services, CTA, footer
-          (hidden on screens smaller than 980px)
+          LEFT SIDE: brand message, services, footer
+          (on phones it stacks above the login card)
           ===================================================== */}
       <section className="auth-hero">
         {/* Top row: logo + handwritten tagline */}
@@ -230,32 +230,6 @@ export default function AuthPage() {
           ))}
         </div>
 
-        {/* Call-to-action bar linking to the company website */}
-        <div className="cta-bar">
-          <div className="cta-ico">
-            <Svg>
-              <path d="M5 19c1-4 3-6 6-8l6-6c2 4 2 8-2 12l-6 2z" />
-              <path d="M9 15l-4 4" />
-              <circle cx="14" cy="9" r="1.2" />
-            </Svg>
-          </div>
-          <div className="cta-text">
-            <b>Let's build something great together.</b>
-            <span>Your ideas. Our expertise. Real results.</span>
-          </div>
-          <a
-            href="https://www.varikode.com"
-            target="_blank"
-            rel="noreferrer"
-            className="cta-link"
-          >
-            Explore Our Services
-            <Svg width="16" height="16">
-              <path d="M5 12h14M13 6l6 6-6 6" />
-            </Svg>
-          </a>
-        </div>
-
         {/* Footer: website + official social links only */}
         <footer className="hero-foot">
           {/* Company website */}
@@ -298,7 +272,7 @@ export default function AuthPage() {
       </section>
 
       {/* =====================================================
-          RIGHT SIDE: login / signup card
+          RIGHT SIDE: login / signup card + CTA bar below it
           ===================================================== */}
       <section className="auth-panel">
         <form className="auth-card" onSubmit={handleSubmit}>
@@ -456,7 +430,33 @@ export default function AuthPage() {
           </div>
         </form>
 
-        {/* Small tagline under the card (hidden on mobile) */}
+        {/* Call-to-action bar: now sits below the login card */}
+        <div className="cta-bar">
+          <div className="cta-ico">
+            <Svg>
+              <path d="M5 19c1-4 3-6 6-8l6-6c2 4 2 8-2 12l-6 2z" />
+              <path d="M9 15l-4 4" />
+              <circle cx="14" cy="9" r="1.2" />
+            </Svg>
+          </div>
+          <div className="cta-text">
+            <b>Let's build something great together.</b>
+            <span>Your ideas. Our expertise. Real results.</span>
+          </div>
+          <a
+            href="https://www.varikode.com"
+            target="_blank"
+            rel="noreferrer"
+            className="cta-link"
+          >
+            Explore Our Services
+            <Svg width="16" height="16">
+              <path d="M5 12h14M13 6l6 6-6 6" />
+            </Svg>
+          </a>
+        </div>
+
+        {/* Small tagline under the card */}
         <div className="tag-foot">
           Innovate <i>•</i> Automate <i>•</i> Grow
         </div>

@@ -97,10 +97,18 @@
   color: var(--cyan); /* the ".ai" part */
 }
 
+/* Logo + text ek hi column me, dono beech me */
+.hero-top > div:first-child {
+  display: flex;
+  flex-direction: column;
+  align-items: center;   /* logo aur text ek dusre ke beech me */
+}
+
 /* "TECHNOLOGY | AI | GROWTH" line under the hero logo */
 .logo-sub {
-  margin: 6px 0 0 4px;
-  padding-left: 62px; /* aligns the text under "varikode" */
+  margin: 12px 0 0 0;
+  padding-left: 0;
+  text-align: center;
   font-size: 12px;
   letter-spacing: 2.5px;
   color: var(--muted);
@@ -113,7 +121,7 @@
 
 /* =====================================================
    LEFT SIDE (HERO)
-   Headline, description, services, CTA bar and footer.
+   Headline, description, services and footer.
    ===================================================== */
 .auth-hero {
   position: relative;
@@ -226,18 +234,96 @@
 .c-orange { background: linear-gradient(135deg, #f08a1c, #c4620a); }
 .c-blue2  { background: linear-gradient(135deg, #1a56e0, #123a9e); }
 
-/* ---------- Call-to-action bar ---------- */
+/* ---------- Footer: website + social icons ---------- */
+.hero-foot {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  margin-top: 10px;
+  color: #b7c3dd;
+  font-size: 14px;
+}
+.hero-foot a {
+  color: inherit;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  transition: color 0.2s;
+}
+.hero-foot a:hover {
+  color: var(--cyan);
+}
+.hero-foot svg {
+  width: 20px;
+  height: 20px;
+}
+/* Thin vertical divider between website and social icons */
+.hero-foot .vr {
+  width: 1px;
+  height: 20px;
+  background: var(--line);
+}
+
+/* =====================================================
+   RIGHT SIDE (FORM PANEL)
+   Contains: login card, CTA bar, tagline
+   ===================================================== */
+.auth-panel {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 22px;
+}
+
+/* Glass-style login card */
+.auth-card {
+  width: 100%;
+  max-width: 560px;
+  padding: clamp(28px, 3vw, 44px) clamp(24px, 3vw, 44px);
+  border-radius: 28px;
+  border: 1px solid rgba(20, 216, 230, 0.35);
+  background: linear-gradient(160deg, rgba(20, 50, 100, 0.45), rgba(8, 18, 40, 0.55));
+  backdrop-filter: blur(14px); /* frosted glass effect */
+  box-shadow:
+    0 0 60px rgba(20, 216, 230, 0.08),  /* soft cyan glow */
+    0 30px 80px rgba(0, 0, 0, 0.5);     /* depth shadow */
+}
+.auth-card .logo {
+  margin-bottom: 28px;
+}
+.auth-card h2 {
+  margin: 0 0 8px;
+  font-size: 38px;
+  font-weight: 700;
+  letter-spacing: -1px;
+}
+.wave {
+  display: inline-block;
+  font-size: 32px; /* waving-hand emoji */
+}
+.auth-muted {
+  margin: 0 0 26px;
+  color: #aebbd6;
+  font-size: 16px;
+}
+
+/* ---------- Call-to-action bar (below login card) ---------- */
 .cta-bar {
+  width: 100%;
+  max-width: 560px;   /* same width as the login card */
   display: flex;
   align-items: center;
   gap: 18px;
   padding: 18px 24px;
-  margin-top: 6px;
   border-radius: 16px;
   border: 1px solid rgba(20, 216, 230, 0.28);
   background: linear-gradient(90deg, rgba(20, 216, 230, 0.08), rgba(22, 119, 255, 0.05));
 }
 .cta-ico {
+  flex: none;
   width: 54px;
   height: 54px;
   border-radius: 14px;
@@ -283,81 +369,6 @@
 }
 .cta-link:hover svg {
   transform: translateX(4px); /* arrow nudges right on hover */
-}
-
-/* ---------- Footer: website + social icons ---------- */
-.hero-foot {
-  display: flex;
-  align-items: center;
-  gap: 18px;
-  margin-top: 10px;
-  color: #b7c3dd;
-  font-size: 14px;
-}
-.hero-foot a {
-  color: inherit;
-  text-decoration: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  transition: color 0.2s;
-}
-.hero-foot a:hover {
-  color: var(--cyan);
-}
-.hero-foot svg {
-  width: 20px;
-  height: 20px;
-}
-/* Thin vertical divider between website and social icons */
-.hero-foot .vr {
-  width: 1px;
-  height: 20px;
-  background: var(--line);
-}
-
-/* =====================================================
-   RIGHT SIDE (FORM PANEL)
-   ===================================================== */
-.auth-panel {
-  position: relative;
-  z-index: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 22px;
-}
-
-/* Glass-style login card */
-.auth-card {
-  width: 100%;
-  max-width: 560px;
-  padding: clamp(28px, 3vw, 44px) clamp(24px, 3vw, 44px);
-  border-radius: 28px;
-  border: 1px solid rgba(20, 216, 230, 0.35);
-  background: linear-gradient(160deg, rgba(20, 50, 100, 0.45), rgba(8, 18, 40, 0.55));
-  backdrop-filter: blur(14px); /* frosted glass effect */
-  box-shadow:
-    0 0 60px rgba(20, 216, 230, 0.08),  /* soft cyan glow */
-    0 30px 80px rgba(0, 0, 0, 0.5);     /* depth shadow */
-}
-.auth-card .logo {
-  margin-bottom: 28px;
-}
-.auth-card h2 {
-  margin: 0 0 8px;
-  font-size: 38px;
-  font-weight: 700;
-  letter-spacing: -1px;
-}
-.wave {
-  display: inline-block;
-  font-size: 32px; /* waving-hand emoji */
-}
-.auth-muted {
-  margin: 0 0 26px;
-  color: #aebbd6;
-  font-size: 16px;
 }
 
 /* ---------- Input fields (icon on the left) ---------- */
@@ -605,7 +616,7 @@
   color: var(--cyan);
 }
 
-/* "Innovate • Automate • Grow" under the card */
+/* "Innovate • Automate • Grow" under the CTA bar */
 .tag-foot {
   align-self: flex-end;
   font-size: 13.5px;
@@ -628,17 +639,64 @@
   }
 }
 
-/* Tablets and phones: hide the left side, show only the form */
+/* Tablets and phones: single column, hero is still visible */
 @media (max-width: 980px) {
   .auth-shell {
     grid-template-columns: 1fr;
     padding: 24px 16px;
+    align-items: start;
   }
   .auth-hero {
-    display: none;
+    display: flex;        /* no longer hidden */
+    max-width: 100%;
   }
-  .tag-foot,
+  .auth-panel {
+    width: 100%;
+  }
   .bg-wave {
     display: none;
+  }
+  .tag-foot {
+    align-self: center;
+  }
+  /* Uncomment the next lines to show the login card ABOVE the hero on phones */
+  /*
+  .auth-panel { order: -1; }
+  */
+}
+
+/* Phones */
+@media (max-width: 600px) {
+  .hero-top {
+    flex-direction: column;
+    gap: 14px;
+  }
+  .script {
+    margin: 0;
+    font-size: 24px;
+  }
+
+  .auth-hero h1 {
+    font-size: 40px;
+    letter-spacing: -1px;
+  }
+  .feat-grid {
+    grid-template-columns: 1fr; /* services in 1 column */
+  }
+  .auth-card h2 {
+    font-size: 30px;
+  }
+  .wave {
+    font-size: 26px;
+  }
+  .cta-bar {
+    flex-wrap: wrap;
+    padding: 16px;
+  }
+  .cta-link {
+    margin-left: 0;
+  }
+  .hero-foot {
+    flex-wrap: wrap;
   }
 }

@@ -1,5 +1,4 @@
--- Fix: match the chatbot id against the FILE path (objects.name),
--- not the chatbot's name column.
+
 
 drop policy if exists "Owners and admins can upload knowledge files" on storage.objects;
 drop policy if exists "Members can read knowledge files" on storage.objects;
