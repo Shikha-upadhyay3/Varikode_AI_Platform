@@ -37,9 +37,9 @@ const messagesFor = (usd) =>
 
 export const PLANS = [
   { id: "free", name: "Free", price: { USD: 0 }, messages: FREE_MESSAGES },
-  { id: "starter", name: "Starter", price: { USD: 9 }, messages: messagesFor(9) },
-  { id: "growth", name: "Growth", price: { USD: 29 }, messages: messagesFor(29) },
-  { id: "scale", name: "Scale", price: { USD: 79 }, messages: messagesFor(79) },
+  { id: "starter", name: "Starter", price: { USD: 1 }, messages: messagesFor(1) },
+  { id: "growth", name: "Growth", price: { USD: 2 }, messages: messagesFor(2) },
+  { id: "scale", name: "Scale", price: { USD: 3 }, messages: messagesFor(3) },
   { id: "enterprise", name: "Enterprise", custom: true },
 ];
 
