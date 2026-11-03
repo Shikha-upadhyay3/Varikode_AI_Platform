@@ -1215,7 +1215,19 @@ function AssistantAvatar({ assistant, size = 28 }) {
 /* ------------------------------------------------------------------ */
 /* Chatbot management                                                  */
 /* ------------------------------------------------------------------ */
-
+const THEME_COLORS = {
+  ocean: "#1e90ff",
+  slate: "#475569",
+  mint: "#14b8a6",
+  violet: "#7c3aed",
+};
+const isHexColor = (v) => /^#[0-9a-f]{6}$/i.test(v || "");
+const themeLabel = (theme) =>
+  isHexColor(theme)
+    ? `Custom (${theme})`
+    : theme
+    ? theme.charAt(0).toUpperCase() + theme.slice(1)
+    : "Ocean";
 
 const EMPTY_CHATBOT_FORM = {
 
@@ -1372,6 +1384,10 @@ function ChatbotManagement() {
     const name = form.name.trim();
     if (!name) {
       setFormError("Chatbot name is required.");
+      return;
+    }
+    if (!THEME_COLORS[form.theme] && !isHexColor(form.theme)) {
+      setFormError("Enter a valid color like #e11d48 (6 characters after #).");
       return;
     }
 
@@ -1674,7 +1690,7 @@ function ChatbotManagement() {
                       </div>
                       <div>
                         <dt>Theme</dt>
-                        <dd>{chatbot.theme}</dd>
+                        <dd>{themeLabel(chatbot.theme)}</dd>
                       </div>
                     </dl>
                     {chatbot.welcome_message && (
@@ -1748,14 +1764,50 @@ function ChatbotManagement() {
             <select
               id="chatbot-theme"
               className="chatbot-input"
-              value={form.theme}
-              onChange={(event) => setForm((current) => ({ ...current, theme: event.target.value }))}
+              value={THEME_COLORS[form.theme] ? form.theme : "custom"}
+              onChange={(event) => {
+                const v = event.target.value;
+                setForm((current) => ({
+                  ...current,
+                  theme:
+                    v === "custom"
+                      ? THEME_COLORS[current.theme] || (isHexColor(current.theme) ? current.theme : "#1e90ff")
+                      : v,
+                }));
+              }}
             >
               <option value="ocean">Ocean</option>
               <option value="slate">Slate</option>
               <option value="mint">Mint</option>
               <option value="violet">Violet</option>
+              <option value="custom">Custom color</option>
             </select>
+
+            {!THEME_COLORS[form.theme] && (
+              <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 10 }}>
+                <input
+                  type="color"
+                  aria-label="Pick chatbot color"
+                  value={isHexColor(form.theme) ? form.theme : "#1e90ff"}
+                  onChange={(event) => setForm((current) => ({ ...current, theme: event.target.value }))}
+                  style={{ width: 48, height: 40, padding: 0, border: "none", background: "none", cursor: "pointer" }}
+                />
+                <input
+                  className="chatbot-input"
+                  style={{ maxWidth: 140, marginTop: 0 }}
+                  value={form.theme}
+                  onChange={(event) => {
+                    let v = event.target.value.trim();
+                    if (v && !v.startsWith("#")) v = "#" + v;
+                    setForm((current) => ({ ...current, theme: v }));
+                  }}
+                  placeholder="#e11d48"
+                  maxLength={7}
+                  aria-label="Hex color"
+                />
+                <small style={{ opacity: 0.7 }}>Matches your website's brand color</small>
+              </div>
+            )}
 
             <label className="field-label" htmlFor="chatbot-logo">Chatbot logo</label>
             <div className="logo-picker">
@@ -2102,7 +2154,7 @@ function Overview({ active, setActive }) {
             <div className="stat-top"><span>Messages answered</span><span className="stat-icon mint"><Icon name="send" size={17} /></span></div>
             <div className="stat-value">{stats ? stats.messages_answered.current.toLocaleString() : "…"}</div>
             <div className="stat-foot"><span className="trend">{fmtChange(msgChange)}</span><span>vs. previous month</span></div>
-            <Spark id="conv" color="#3aa0ff" data={sparkOf(daily)} />
+            <Spark id="msg" color="#3aa0ff" data={sparkOf(daily)} />
           </article>
           <article className="stat-card">
             <div className="stat-top"><span>Knowledge sources</span><span className="stat-icon amber"><Icon name="book" size={17} /></span></div>
@@ -2112,6 +2164,7 @@ function Overview({ active, setActive }) {
           </article>
           <article className="stat-card">
             <div className="stat-top"><span>Resolution rate</span><span className="stat-icon blue"><Icon name="spark" size={18} /></span></div>
+            <div className="stat-value">{outcomeTotal ? `${resRate}%` : "…"}</div>
             <div className="stat-foot"><span className="trend">{fmtChange(resChange)}</span><span>vs. previous month</span></div>
             <Spark id="res" color="#60a5fa" data={sparkOf((stats?.daily ?? []).map((d) => d.resolved))} />
 
