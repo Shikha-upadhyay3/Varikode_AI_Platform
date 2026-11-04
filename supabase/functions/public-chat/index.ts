@@ -9,6 +9,22 @@ const HUMAN_ACTIVE_MINUTES = 15;
 // Change it without redeploying code by setting the FREE_MONTHLY_MESSAGES secret.
 const FREE_MONTHLY_MESSAGES = Number(Deno.env.get("FREE_MONTHLY_MESSAGES") ?? "50");
 
+const PLAN_LIMITS: Record<string, number> = {
+  free: FREE_MONTHLY_MESSAGES,
+  starter: 650,
+  growth: 2200,
+  scale: 6050,
+};
+
+async function getMonthlyLimit(orgId: string): Promise<number> {
+  const { data } = await admin.from("organizations")
+    .select("plan, subscription_end_date").eq("id", orgId).maybeSingle();
+  const plan = String(data?.plan ?? "free");
+  const expired = data?.subscription_end_date && new Date(data.subscription_end_date) < new Date();
+  if (plan === "free" || expired) return PLAN_LIMITS.free;
+  return PLAN_LIMITS[plan] ?? PLAN_LIMITS.free;
+}
+
 const MODEL = Deno.env.get("GEMINI_MODEL") ?? "gemini-3.6-flash";
 const THINKING_LEVEL = Deno.env.get("GEMINI_THINKING_LEVEL") ?? "";
 
@@ -279,9 +295,12 @@ Deno.serve(async (req) => {
     // True when the organization has used up its monthly AI replies.
     // If the count cannot be read, the chatbot keeps working (the error is logged).
     const isOutOfCredits = async () => {
-      const used = await countMonthReplies(bot.organization_id);
-      return used !== null && used >= FREE_MONTHLY_MESSAGES;
-    };
+  const [used, limit] = await Promise.all([
+    countMonthReplies(bot.organization_id),
+    getMonthlyLimit(bot.organization_id),
+  ]);
+  return used !== null && used >= limit;
+};
     const CREDITS_MESSAGE =
       "This assistant has reached its message limit for now. Please contact the website owner.";
 
