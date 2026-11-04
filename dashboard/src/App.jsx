@@ -238,7 +238,7 @@ function Spark({ data, color, id }) {
 
 // Bada area chart, hover karne par value dikhti hai
 function AreaChart({ data }) {
-  const [hover, setHover] = useState(data.length - 3);
+  const [hover, setHover] = useState(Math.max(0, data.length - 3));
   const W = 600, H = 230, L = 38, R = 14, T = 16, B = 28;
   const max = Math.max(...data.map((d) => d.value));
   const top = Math.max(40, Math.ceil(max / 40) * 40);
@@ -326,7 +326,7 @@ function StackedBars({ data }) {
         return (
           <g key={d.label}>
             <rect x={bx} y={y(d.a)} width={bw} height={y(0) - y(d.a)} rx="2" fill="#2dd4bf" />
-            <rect x={bx} y={y(d.a + d.b)} width={bw} height={y(d.a) - y(d.a + d.b) - 1} rx="2" fill="#1e90ff" />
+            <rect x={bx} y={y(d.a + d.b)} width={bw} height={Math.max(0, y(d.a) - y(d.a + d.b) - 1)} rx="2" fill="#1e90ff" />
             {i % 3 === 0 && (
               <text x={bx + bw / 2} y={H - 8} textAnchor="middle" fontSize="10" fill={AXIS_TEXT}>{d.label.replace("Oct ", "")}</text>
             )}
@@ -592,7 +592,7 @@ function Sidebar({ active, setActive, open, close }) {
     } else {
       const { data: createdOrganization, error: fetchError } = await supabase
         .from("organizations")
-        .select("id, name")
+        .select("id, name, plan, subscription_end_date")
         .eq("id", organizationId)
         .single();
 
