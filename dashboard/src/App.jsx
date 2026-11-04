@@ -1,3 +1,4 @@
+import { handleUpgrade } from "./billing";
 import { useEffect, useRef, useState } from "react";
 import "./App.css";
 import "./theme.css";
@@ -2544,14 +2545,21 @@ export default function App() {
           <>
             <Topbar title="Pricing" />
             <PricingPage
-              currentPlanId={organization?.plan ?? null}
-              usedMessages={pricingStats ? pricingStats.month_messages ?? 0 : null}
-              defaultName={user?.user_metadata?.full_name ?? ""}
-              defaultEmail={user?.email ?? ""}
-              onContactSales={contactSales}
-              openContact={contactRequested}
-              onContactHandled={() => setContactRequested(false)}
-            />
+  currentPlanId={organization?.plan ?? null}
+  usedMessages={pricingStats ? pricingStats.month_messages ?? 0 : null}
+  defaultName={user?.user_metadata?.full_name ?? ""}
+  defaultEmail={user?.email ?? ""}
+  onContactSales={contactSales}
+  openContact={contactRequested}
+  onContactHandled={() => setContactRequested(false)}
+  onSelectPlan={(planId, cycle) => {
+    if (cycle === "yearly") {
+      alert("Yearly billing is coming soon. Please choose monthly for now.");
+      return;
+    }
+    handleUpgrade(planId);
+  }}
+/>
           </>
         )}
         {active !== "Chatbots" && active !== "Knowledge sources" && active !== "Chats" && active !== "Leads" && active !== "Assistant settings" && active !== "Pricing" && <Overview active={active} setActive={setActive} />}

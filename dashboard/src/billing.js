@@ -26,6 +26,7 @@ export async function handleUpgrade(plan) {
       else alert("Payment verification failed. Please contact support.");
     },
     theme: { color: "#2dd4bf" },
+    modal: { ondismiss: () => console.log("Checkout closed") },
   });
   rzp.open();
 }
