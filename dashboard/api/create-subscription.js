@@ -14,6 +14,13 @@ export async function POST(req) {
     return Response.json({ error: "Invalid plan" }, { status: 400 });
   }
 
+  if (!PLANS[plan].planId) {
+  return Response.json(
+    { error: "Razorpay Plan ID is not configured" },
+    { status: 500 }
+  );
+}
+
   const subscription = await rzp.subscriptions.create({
     plan_id: PLANS[plan].planId,
     total_count: 120, // billing cycles (120 months = 10 years of auto-renew)

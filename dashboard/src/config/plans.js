@@ -22,7 +22,7 @@ const FREE_MESSAGES = 50;
 
 // Discount for paying a year at once (0.3 = 30%). Set to 0 to hide the toggle.
 // A yearly plan also needs to exist in Razorpay before checkout can use it.
-export const YEARLY_DISCOUNT = 0.3;
+export const YEARLY_DISCOUNT = 0;
 
 // Varikode contact details, copied from https://www.varikode.com (footer).
 export const CONTACT = {
